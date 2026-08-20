@@ -38,7 +38,7 @@ export function ShareButton({
       type="button"
       onClick={handleShare}
       className={`inline-flex items-center justify-center gap-2 rounded-full border border-white/12 bg-black/25 font-bold text-white backdrop-blur transition-colors hover:border-cyan-300/40 hover:bg-black/40 ${
-        compact ? "h-10 w-10" : "h-11 px-4 text-sm"
+        compact ? "h-11 w-11" : "h-11 px-4 text-sm"
       }`}
       aria-label={`Share ${title}`}
     >

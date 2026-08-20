@@ -11,7 +11,7 @@ export default function NotFound() {
           This route left Vice City
         </h1>
         <p className="mt-5 leading-7 text-zinc-400">
-          The page may have moved, or the story is not in the development newsroom yet.
+          The page may have moved, or the story is not available in the newsroom yet.
         </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Link href="/" className="inline-flex min-h-12 items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-black text-[#090813]">

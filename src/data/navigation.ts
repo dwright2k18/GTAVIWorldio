@@ -9,7 +9,14 @@ export const primaryNavigation = [
   { label: "Gameplay", href: "/search?q=gameplay" },
   { label: "Rumors", href: "/latest?verification=RUMOR" },
   { label: "Guides", href: "/search?q=guide" },
+  { label: "Verification", href: "/verification" },
 ] as const;
+
+export const desktopNavigation = primaryNavigation.filter((item) =>
+  ["Latest", "News", "Videos", "Quick Hits", "Map", "Characters", "Rumors"].includes(
+    item.label,
+  ),
+);
 
 export const footerNavigation = {
   Explore: primaryNavigation.slice(1, 6),
@@ -19,5 +26,10 @@ export const footerNavigation = {
     { label: "Jason", href: "/search?q=Jason" },
     { label: "Vice City", href: "/search?q=Vice+City" },
     { label: "Platforms", href: "/search?q=platforms" },
+  ],
+  Standards: [
+    { label: "Verification", href: "/verification" },
+    { label: "The GTA VI Brief", href: "/#newsletter" },
+    { label: "Search", href: "/search" },
   ],
 } as const;

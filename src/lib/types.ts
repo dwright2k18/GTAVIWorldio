@@ -27,6 +27,16 @@ export type EditorialMedia = {
   label: string;
   gradient: string;
   accent: string;
+  src?: string;
+  focalPoint?: string;
+  credit?: string;
+};
+
+export type EditorialVideo = {
+  src: string;
+  mimeType?: "video/mp4" | "video/webm";
+  poster?: string;
+  captions?: string;
 };
 
 export type StorySource = {
@@ -66,7 +76,6 @@ export type Story = {
     engagement: number;
     trendingScore: number;
   };
-  isSample: boolean;
 };
 
 export type QuickHit = {
@@ -79,11 +88,11 @@ export type QuickHit = {
   publishedAt: string;
   durationSeconds: 13;
   media: EditorialMedia;
+  video?: EditorialVideo;
   social: SocialLinks;
   metrics: {
     views: number;
     engagement: number;
     viralScore: number;
   };
-  isSample: boolean;
 };

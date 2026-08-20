@@ -8,7 +8,7 @@ import { searchContent } from "@/data/content";
 
 export const metadata: Metadata = {
   title: "Search",
-  description: "Search GTA VI World sample stories, analysis, characters, locations, and Quick Hits.",
+  description: "Search GTA VI World stories, analysis, characters, locations, and Quick Hits.",
   alternates: { canonical: "/search" },
   robots: { index: false, follow: true },
 };
@@ -104,16 +104,16 @@ export default async function SearchPage({
               </>
             ) : (
               <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.03] p-10 text-center">
-                <h2 className="text-2xl font-black text-white">No matching sample content</h2>
+                <h2 className="text-2xl font-black text-white">No matching stories</h2>
                 <p className="mt-3 text-zinc-400">Try a character, location, category, or verification status.</p>
               </div>
             )}
           </div>
         ) : (
           <div className="mx-auto mt-16 max-w-2xl rounded-3xl border border-white/10 bg-white/[0.03] p-8 text-center">
-            <h2 className="text-2xl font-black text-white">Search the development newsroom</h2>
+            <h2 className="text-2xl font-black text-white">Search the GTA VI newsroom</h2>
             <p className="mt-3 leading-7 text-zinc-400">
-              The MVP searches story headlines, summaries, categories, tags, verification statuses, and Quick Hit titles. It can later move to a database-backed search service without changing the interface.
+              Search story headlines, summaries, categories, tags, verification statuses, and Quick Hit titles from one place.
             </p>
           </div>
         )}

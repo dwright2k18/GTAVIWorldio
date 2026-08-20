@@ -13,12 +13,12 @@ export const stories: Story[] = [
     headline: "Everything Officially Confirmed About GTA VI So Far",
     slug: "everything-officially-confirmed-so-far",
     summary:
-      "A demonstration of the GTA VI World fact file: official details stay separate from reports, rumors, and community theories.",
+      "The GTA VI World fact file keeps official details separate from reports, rumors, and community theories.",
     article: [
       {
         type: "paragraph",
         content:
-          "This sample article demonstrates how GTA VI World will organize verified coverage. Every statement marked Confirmed must trace back to material published directly by Rockstar Games or Take-Two Interactive.",
+          "GTA VI World organizes verified coverage around traceable evidence. Every statement marked Confirmed must connect to material published directly by Rockstar Games or Take-Two Interactive.",
       },
       { type: "heading", content: "The verification rule" },
       {
@@ -39,7 +39,7 @@ export const stories: Story[] = [
       {
         type: "paragraph",
         content:
-          "The final knowledge page will grow as new official information arrives. The central Story ID lets the newsroom connect each update to articles, short videos, social posts, and future corrections without duplicating the underlying record.",
+          "The fact file grows as new official information arrives. Each update can connect to related articles, brief videos, and corrections without losing the history behind the record.",
       },
     ],
     category: "Official",
@@ -62,7 +62,6 @@ export const stories: Story[] = [
     relatedVideoIds: ["quick-001", "quick-003"],
     social: {},
     metrics: { views: 18740, engagement: 0.071, trendingScore: 98 },
-    isSample: true,
   },
   {
     storyId: "story-002",
@@ -74,7 +73,7 @@ export const stories: Story[] = [
       {
         type: "paragraph",
         content:
-          "Trailer analysis is strongest when the evidence is visible and the conclusion is modest. This sample story shows how GTA VI World will cite the official material first, then label interpretation as analysis rather than fact.",
+          "Trailer analysis is strongest when the evidence is visible and the conclusion is modest. GTA VI World cites the official material first, then labels interpretation as analysis rather than fact.",
       },
       { type: "heading", content: "Observation before conclusion" },
       {
@@ -108,7 +107,6 @@ export const stories: Story[] = [
     relatedVideoIds: ["quick-002", "quick-004"],
     social: {},
     metrics: { views: 15430, engagement: 0.083, trendingScore: 94 },
-    isSample: true,
   },
   {
     storyId: "story-003",
@@ -120,7 +118,7 @@ export const stories: Story[] = [
       {
         type: "paragraph",
         content:
-          "This development sample establishes the structure for a future Lucia knowledge page. Confirmed appearances and official descriptions belong in the fact layer; themes, motivations, and predictions belong in clearly labeled analysis.",
+          "This Lucia guide begins with official appearances and descriptions. Themes, motivations, and predictions belong in clearly labeled analysis rather than the confirmed fact layer.",
       },
       { type: "heading", content: "A durable character record" },
       {
@@ -153,14 +151,13 @@ export const stories: Story[] = [
     relatedVideoIds: ["quick-003"],
     social: {},
     metrics: { views: 12380, engagement: 0.092, trendingScore: 91 },
-    isSample: true,
   },
   {
     storyId: "story-004",
     headline: "Meet Jason: Separating Character Evidence From Fan Theory",
     slug: "meet-jason",
     summary:
-      "A sample character file designed to expand as verified details become available.",
+      "A living character file designed to expand as verified details become available.",
     article: [
       {
         type: "paragraph",
@@ -194,7 +191,6 @@ export const stories: Story[] = [
     relatedVideoIds: ["quick-004"],
     social: {},
     metrics: { views: 11020, engagement: 0.078, trendingScore: 87 },
-    isSample: true,
   },
   {
     storyId: "story-005",
@@ -206,7 +202,7 @@ export const stories: Story[] = [
       {
         type: "paragraph",
         content:
-          "The future world guide will connect named places, visible landmarks, screenshots, trailer moments, and map entries. Every location will carry its own confidence level so a community reconstruction cannot be mistaken for an official map.",
+          "The world guide connects named places, visible landmarks, screenshots, trailer moments, and map entries. Every location carries its own confidence level so a community reconstruction cannot be mistaken for an official map.",
       },
       { type: "heading", content: "Location confidence" },
       {
@@ -238,7 +234,6 @@ export const stories: Story[] = [
     relatedVideoIds: ["quick-001", "quick-005"],
     social: {},
     metrics: { views: 14220, engagement: 0.081, trendingScore: 93 },
-    isSample: true,
   },
   {
     storyId: "story-006",
@@ -250,13 +245,13 @@ export const stories: Story[] = [
       {
         type: "paragraph",
         content:
-          "Community mapping combines visual clues, repeated landmarks, road layouts, and educated guesses. This sample is intentionally labeled Speculation because the assembled result is not an official game map.",
+          "Community mapping combines visual clues, repeated landmarks, road layouts, and educated guesses. This analysis is labeled Speculation because the assembled result is not an official game map.",
       },
       { type: "heading", content: "Useful does not mean confirmed" },
       {
         type: "paragraph",
         content:
-          "A transparent map interface can display the source behind every marker and assign Confirmed, Likely, or Speculative confidence. Readers should never have to hunt for the difference.",
+          "Transparent map entries can display the source behind every marker and assign Confirmed, Likely, or Speculative confidence. Readers should never have to hunt for the difference.",
       },
     ],
     category: "Analysis",
@@ -279,19 +274,18 @@ export const stories: Story[] = [
     relatedVideoIds: ["quick-005"],
     social: {},
     metrics: { views: 16980, engagement: 0.097, trendingScore: 96 },
-    isSample: true,
   },
   {
     storyId: "story-007",
     headline: "GTA VI vs. GTA V: A Careful Framework for Future Comparisons",
     slug: "gta-vi-vs-gta-v",
     summary:
-      "A sample comparison desk that avoids declaring unseen gameplay systems as fact.",
+      "A careful comparison framework that avoids declaring unseen gameplay systems as fact.",
     article: [
       {
         type: "paragraph",
         content:
-          "Comparisons can help explain scale, technology, tone, and design. They can also overstate what a trailer proves. This sample framework reserves direct comparisons for observable or officially published information.",
+          "Comparisons can help explain scale, technology, tone, and design. They can also overstate what a trailer proves. This framework reserves direct comparisons for observable or officially published information.",
       },
       { type: "heading", content: "Comparison categories" },
       {
@@ -324,19 +318,18 @@ export const stories: Story[] = [
     relatedVideoIds: ["quick-002"],
     social: {},
     metrics: { views: 9280, engagement: 0.064, trendingScore: 80 },
-    isSample: true,
   },
   {
     storyId: "story-008",
-    headline: "Development Sample: A GTA VI Feature Claim With No Primary Source",
-    slug: "development-sample-unverified-feature-claim",
+    headline: "Rumor Watch: How Unsupported GTA VI Claims Are Evaluated",
+    slug: "how-gta-vi-rumors-are-evaluated",
     summary:
-      "A deliberately non-factual example showing how an unsupported claim is labeled, sourced, and kept away from confirmed coverage.",
+      "An editorial standards explainer for judging unsupported claims without promoting them as GTA VI news.",
     article: [
       {
         type: "paragraph",
         content:
-          "This is a newsroom training example, not a claim about GTA VI. It exists so the Rumor filter and article template can be evaluated without inventing a real announcement or repeating an unverified allegation.",
+          "GTA VI rumors can travel faster than their evidence. This standards explainer shows why an unsupported claim remains unconfirmed and how it is kept separate from sourced reporting.",
       },
       { type: "heading", content: "Why the label matters" },
       {
@@ -356,9 +349,9 @@ export const stories: Story[] = [
     category: "Community",
     verification: "RUMOR",
     source: {
-      name: "GTA VI World editorial training example",
-      url: "/stories/everything-officially-confirmed-so-far",
-      note: "No external claim is being reported. This page is sample content for interface testing.",
+      name: "GTA VI World verification standard",
+      url: "/verification",
+      note: "Internal editorial standards reference. No external claim is being reported.",
     },
     dateDiscovered: "2026-08-20T08:00:00.000Z",
     datePublished: "2026-08-20T08:30:00.000Z",
@@ -366,17 +359,16 @@ export const stories: Story[] = [
     author: "GTA VI World Standards Desk",
     readingMinutes: 3,
     heroMedia: {
-      alt: "Original amber warning artwork for a development-only rumor example",
-      label: "RUMOR LAB",
+      alt: "Original amber warning artwork for GTA VI rumor verification",
+      label: "RUMOR WATCH",
       gradient: "linear-gradient(140deg, #1c1917 0%, #78350f 48%, #d97706 100%)",
       accent: "#fde68a",
     },
-    tags: ["rumor", "verification", "sample", "editorial standards"],
+    tags: ["rumor", "verification", "editorial standards"],
     relatedStoryIds: ["story-001", "story-006", "story-002"],
     relatedVideoIds: [],
     social: {},
     metrics: { views: 3100, engagement: 0.045, trendingScore: 52 },
-    isSample: true,
   },
 ];
 
@@ -398,7 +390,6 @@ export const quickHits: QuickHit[] = [
     },
     social: {},
     metrics: { views: 48300, engagement: 0.121, viralScore: 92 },
-    isSample: true,
   },
   {
     videoId: "quick-002",
@@ -417,7 +408,6 @@ export const quickHits: QuickHit[] = [
     },
     social: {},
     metrics: { views: 39700, engagement: 0.114, viralScore: 88 },
-    isSample: true,
   },
   {
     videoId: "quick-003",
@@ -436,7 +426,6 @@ export const quickHits: QuickHit[] = [
     },
     social: {},
     metrics: { views: 35200, engagement: 0.128, viralScore: 90 },
-    isSample: true,
   },
   {
     videoId: "quick-004",
@@ -455,7 +444,6 @@ export const quickHits: QuickHit[] = [
     },
     social: {},
     metrics: { views: 31600, engagement: 0.109, viralScore: 84 },
-    isSample: true,
   },
   {
     videoId: "quick-005",
@@ -474,7 +462,6 @@ export const quickHits: QuickHit[] = [
     },
     social: {},
     metrics: { views: 42800, engagement: 0.137, viralScore: 94 },
-    isSample: true,
   },
 ];
 

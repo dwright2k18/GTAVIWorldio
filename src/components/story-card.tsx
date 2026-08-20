@@ -17,11 +17,6 @@ export function StoryCard({ story }: { story: Story }) {
           <span className="text-[0.65rem] font-black tracking-[0.12em] text-pink-300 uppercase">
             {story.category}
           </span>
-          {story.isSample && (
-            <span className="ml-auto text-[0.6rem] font-bold tracking-widest text-zinc-500 uppercase">
-              Sample editorial
-            </span>
-          )}
         </div>
         <h3 className="mt-4 text-balance text-xl font-bold tracking-[-0.025em] text-white sm:text-2xl">
           <Link href={`/stories/${story.slug}`} className="hover:text-pink-200">

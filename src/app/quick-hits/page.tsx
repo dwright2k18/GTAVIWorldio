@@ -22,24 +22,24 @@ export default function QuickHitsPage() {
               GTA VI Quick Hits
             </h1>
             <p className="mt-5 max-w-3xl text-base leading-7 text-zinc-400 sm:text-lg">
-              A mobile-first stream for fast stories. These are static development concepts—no video autoplays, and every item keeps its verification status attached.
+              A mobile-first stream for fast stories. Nothing autoplays, and every vertical briefing keeps its verification status attached.
             </p>
           </div>
           <aside className="rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.06] p-5 text-sm leading-6 text-cyan-100/75">
-            Future pipeline: quick hit → performance data → viral score → winning topic → long video → article.
+            Built for the 13-second format, with a clear path from every clip to its source story, related coverage, and verification details.
           </aside>
         </div>
 
         <section id="all-clips" className="mt-12" aria-labelledby="all-clips-heading">
           <div className="flex items-end justify-between gap-4">
             <div>
-              <p className="eyebrow">Sample feed</p>
+              <p className="eyebrow">Vertical briefing feed</p>
               <h2 id="all-clips-heading" className="mt-3 text-3xl font-black tracking-[-0.04em] text-white">
                 All clips
               </h2>
             </div>
             <p className="text-xs font-bold tracking-widest text-zinc-600 uppercase">
-              {quickHits.length} concepts
+              {quickHits.length} quick hits
             </p>
           </div>
           <div className="mt-7 grid gap-x-4 gap-y-10 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

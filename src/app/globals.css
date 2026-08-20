@@ -76,6 +76,15 @@ a {
   text-wrap: balance;
 }
 
+.scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
 .skip-link {
   position: fixed;
   top: 0.75rem;

@@ -13,40 +13,80 @@ export function QuickHitCard({ video }: { video: QuickHit }) {
 
   return (
     <article id={video.videoId} className="group min-w-0">
-      <div className="relative overflow-hidden rounded-[1.7rem] border border-white/12 bg-white/[0.035]">
-        <StoryArtwork media={video.media} aspect="vertical" priorityLabel="13 SECOND QUICK HIT" />
-        <div className="absolute inset-0 grid place-items-center bg-black/5">
+      <div className="relative isolate aspect-[9/16] overflow-hidden rounded-[1.7rem] border border-white/15 bg-white/[0.035] shadow-xl shadow-black/20 transition-transform duration-300 group-hover:-translate-y-1 group-hover:border-pink-300/30">
+        {video.video ? (
+          <video
+            className="absolute inset-0 h-full w-full object-cover"
+            controls
+            playsInline
+            preload="metadata"
+            poster={video.video.poster}
+            aria-label={video.headline}
+          >
+            <source src={video.video.src} type={video.video.mimeType ?? "video/mp4"} />
+            {video.video.captions && (
+              <track kind="captions" src={video.video.captions} srcLang="en" label="English" default />
+            )}
+          </video>
+        ) : (
+          <StoryArtwork
+            media={video.media}
+            aspect="vertical"
+            showLabel={false}
+            sizes="(min-width: 1280px) 18vw, (min-width: 1024px) 28vw, (min-width: 640px) 45vw, 78vw"
+          />
+        )}
+
+        {!video.video && (
           <Link
             href={storyPath}
-            className="grid h-15 w-15 place-items-center rounded-full border border-white/35 bg-black/35 text-white backdrop-blur transition-transform group-hover:scale-105"
+            className="absolute inset-0 z-10 grid place-items-center bg-black/5"
             aria-label={`Open story for ${video.headline}`}
           >
-            <PlayIcon className="ml-1 h-6 w-6" />
+            <span className="grid h-16 w-16 place-items-center rounded-full border border-white/45 bg-black/40 text-white shadow-[0_0_40px_rgba(244,114,182,0.3)] backdrop-blur-md transition-transform group-hover:scale-105">
+              <PlayIcon className="ml-1 h-7 w-7" />
+            </span>
           </Link>
-        </div>
-        <div className="absolute top-4 right-4">
-          <ShareButton title={video.headline} path={`/quick-hits#${video.videoId}`} compact />
-        </div>
-        <span className="absolute right-4 bottom-4 rounded-full bg-black/55 px-2.5 py-1 text-[0.68rem] font-black text-white backdrop-blur">
-          0:13
-        </span>
-      </div>
-      <div className="px-1 pt-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <VerificationBadge status={video.verification} compact />
-          <span className="text-[0.65rem] font-black tracking-widest text-pink-300 uppercase">
-            {video.category}
+        )}
+
+        <div className="pointer-events-none absolute inset-x-4 top-4 z-20 flex items-center justify-between gap-3">
+          <span className="rounded-full border border-white/20 bg-black/45 px-3 py-1.5 text-[0.62rem] font-black tracking-[0.16em] text-white backdrop-blur-md">
+            QUICK HIT
+          </span>
+          <span className="rounded-full bg-pink-400 px-2.5 py-1 text-[0.62rem] font-black text-[#180713]">
+            0:13
           </span>
         </div>
-        <h3 className="mt-3 text-lg font-bold leading-6 text-white">
-          <Link href={storyPath} className="hover:text-pink-200">
+        <div className="absolute top-14 right-4 z-20">
+          <ShareButton title={video.headline} path={`/quick-hits#${video.videoId}`} compact />
+        </div>
+
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-[#090813] via-[#090813]/90 to-transparent px-5 pt-20 pb-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <VerificationBadge status={video.verification} compact />
+            <span className="text-[0.62rem] font-black tracking-[0.15em] text-pink-200 uppercase">
+              {video.category}
+            </span>
+          </div>
+          <h3 className="mt-3 text-balance text-xl font-black leading-6 tracking-[-0.025em] text-white">
             {video.headline}
-          </Link>
-        </h3>
-        <p className="mt-2 text-xs text-zinc-500">
-          {formatEditorialDate(video.publishedAt)} · Sample video concept
-        </p>
+          </h3>
+          <div className="mt-4 h-1 overflow-hidden rounded-full bg-white/20">
+            <span className="block h-full w-1/4 rounded-full bg-gradient-to-r from-cyan-300 to-pink-300" />
+          </div>
+          <div className="mt-2 flex items-center justify-between text-[0.62rem] font-bold text-white/60">
+            <span>0:00</span>
+            <span>{formatEditorialDate(video.publishedAt)}</span>
+          </div>
+        </div>
       </div>
+      <Link
+        href={storyPath}
+        className="mt-3 inline-flex min-h-11 items-center gap-2 px-1 text-xs font-black tracking-[0.13em] text-zinc-400 uppercase hover:text-white"
+      >
+        Open full story
+        <span aria-hidden="true">→</span>
+      </Link>
     </article>
   );
 }

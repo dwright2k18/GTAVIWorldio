@@ -7,6 +7,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: absoluteUrl("/"), changeFrequency: "daily", priority: 1 },
     { url: absoluteUrl("/latest"), changeFrequency: "hourly", priority: 0.9 },
     { url: absoluteUrl("/quick-hits"), changeFrequency: "daily", priority: 0.8 },
+    { url: absoluteUrl("/verification"), changeFrequency: "monthly", priority: 0.7 },
   ];
   const storyRoutes: MetadataRoute.Sitemap = stories.map((story) => ({
     url: absoluteUrl(`/stories/${story.slug}`),

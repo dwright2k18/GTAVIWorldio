@@ -8,7 +8,7 @@ import { verificationStatuses, type StoryCategory } from "@/lib/types";
 export const metadata: Metadata = {
   title: "Latest GTA VI News",
   description:
-    "Browse the latest sample GTA VI news, analysis, character guides, and rumor coverage with visible verification labels.",
+    "Browse the latest GTA VI news, analysis, character guides, and rumor coverage with visible verification labels.",
   alternates: { canonical: "/latest" },
 };
 
@@ -41,12 +41,12 @@ export default async function LatestPage({
       <div className="site-shell">
         <Breadcrumbs items={[{ label: "Home", href: "/" }, { label: "Latest" }]} />
         <div className="mt-8 max-w-3xl">
-          <p className="eyebrow">Live architecture · Sample content</p>
+          <p className="eyebrow">The GTA VI news desk</p>
           <h1 className="mt-4 text-balance text-4xl font-black tracking-[-0.055em] text-white sm:text-6xl">
             Latest GTA VI news
           </h1>
           <p className="mt-5 text-base leading-7 text-zinc-400 sm:text-lg">
-            A fast editorial feed built around source transparency. Development stories are clearly marked and do not represent new GTA VI announcements.
+            A fast editorial feed built around source transparency, with confirmation, reporting, rumor, and analysis kept clearly distinct.
           </p>
         </div>
 
@@ -101,8 +101,8 @@ export default async function LatestPage({
           </div>
         ) : (
           <div className="mt-8 rounded-3xl border border-white/10 bg-white/[0.03] p-8 text-center">
-            <h2 className="text-2xl font-black text-white">No sample stories in this filter yet</h2>
-            <p className="mt-3 text-zinc-400">The data model supports this status and is ready for verified newsroom content.</p>
+            <h2 className="text-2xl font-black text-white">No stories in this filter yet</h2>
+            <p className="mt-3 text-zinc-400">Try another category or return to the complete news feed.</p>
             <Link href="/latest" className="mt-6 inline-flex rounded-full bg-white px-5 py-3 text-sm font-black text-[#090813]">
               Reset filters
             </Link>

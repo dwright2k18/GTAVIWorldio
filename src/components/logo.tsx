@@ -4,7 +4,7 @@ export function Logo({ compact = false }: { compact?: boolean }) {
   return (
     <Link
       href="/"
-      className="group inline-flex items-center gap-2.5 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-pink-400"
+      className="group inline-flex min-h-11 items-center gap-2.5 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-pink-400"
       aria-label="GTA VI World home"
     >
       <span className="grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-cyan-300 via-pink-400 to-orange-300 text-sm font-black text-[#090813] shadow-[0_0_24px_rgba(244,114,182,0.2)] transition-transform group-hover:-rotate-3">

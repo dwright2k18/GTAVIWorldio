@@ -14,7 +14,7 @@ export function TrendingList({ stories }: { stories: Story[] }) {
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <VerificationBadge status={story.verification} compact />
               <span className="text-[0.62rem] font-black tracking-widest text-zinc-500 uppercase">
-                Score {story.metrics.trendingScore}
+                {story.category}
               </span>
             </div>
             <Link

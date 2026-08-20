@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Breadcrumbs } from "@/components/breadcrumbs";
-import { ClockIcon } from "@/components/icons";
+import { ArrowRightIcon, ClockIcon } from "@/components/icons";
 import { QuickHitCard } from "@/components/quick-hit-card";
 import { ShareButton } from "@/components/share-button";
 import { StoryArtwork } from "@/components/story-artwork";
@@ -94,6 +94,17 @@ export default async function StoryPage({
 
   const relatedStories = getRelatedStories(story);
   const relatedQuickHits = getRelatedQuickHits(story);
+  const latestNews = stories
+    .filter((candidate) => candidate.storyId !== story.storyId)
+    .sort(
+      (a, b) =>
+        new Date(b.datePublished).getTime() - new Date(a.datePublished).getTime(),
+    )
+    .slice(0, 4);
+  const trendingNews = [...stories]
+    .filter((candidate) => candidate.storyId !== story.storyId)
+    .sort((a, b) => b.metrics.trendingScore - a.metrics.trendingScore)
+    .slice(0, 4);
   const sourceUrl = story.source.url.startsWith("http")
     ? story.source.url
     : absoluteUrl(story.source.url);
@@ -170,11 +181,6 @@ export default async function StoryPage({
             <span className="text-[0.7rem] font-black tracking-[0.16em] text-pink-300 uppercase">
               {story.category}
             </span>
-            {story.isSample && (
-              <span className="rounded-full border border-white/12 px-2.5 py-1.5 text-[0.62rem] font-black tracking-widest text-zinc-400 uppercase">
-                Development sample
-              </span>
-            )}
           </div>
           <h1 className="mt-6 text-balance text-4xl font-black tracking-[-0.055em] text-white sm:text-6xl lg:text-7xl">
             {story.headline}
@@ -194,7 +200,7 @@ export default async function StoryPage({
         </header>
 
         <div className="mx-auto mt-10 max-w-6xl overflow-hidden rounded-[2rem] border border-white/12">
-          <StoryArtwork media={story.heroMedia} aspect="wide" priorityLabel="ORIGINAL DEVELOPMENT ARTWORK" />
+          <StoryArtwork media={story.heroMedia} aspect="wide" priority priorityLabel="GTA VI WORLD ORIGINAL" />
         </div>
 
         <div className="mx-auto mt-10 grid max-w-5xl gap-9 lg:grid-cols-[8rem_minmax(0,1fr)] lg:gap-12">
@@ -203,12 +209,6 @@ export default async function StoryPage({
             <ShareButton title={story.headline} path={`/stories/${story.slug}`} />
           </aside>
           <div>
-            {story.isSample && (
-              <aside className="mb-8 rounded-2xl border border-amber-300/20 bg-amber-300/[0.07] p-5 text-sm leading-6 text-amber-100/80">
-                This is clearly labeled sample editorial content for development and QA. It does not announce new GTA VI information.
-              </aside>
-            )}
-
             <aside className="mb-9 rounded-2xl border border-white/10 bg-white/[0.035] p-5">
               <div className="flex flex-wrap items-center gap-3">
                 <VerificationBadge status={story.verification} />
@@ -265,7 +265,7 @@ export default async function StoryPage({
           <section className="mt-16 border-t border-white/8 pt-14" aria-labelledby="related-videos-heading">
             <p className="eyebrow">Watch next</p>
             <h2 id="related-videos-heading" className="mt-3 text-3xl font-black tracking-[-0.045em] text-white">
-              Related Quick Hits
+              Related Videos
             </h2>
             <div className="mt-7 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {relatedQuickHits.map((video) => (
@@ -274,6 +274,49 @@ export default async function StoryPage({
             </div>
           </section>
         )}
+
+        <section className="mt-16 border-t border-white/8 pt-14" aria-labelledby="more-news-heading">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className="eyebrow">Keep exploring</p>
+              <h2 id="more-news-heading" className="mt-3 text-3xl font-black tracking-[-0.045em] text-white">
+                More from GTA VI World
+              </h2>
+            </div>
+            <Link href="/latest" className="inline-flex min-h-11 items-center gap-2 text-sm font-bold text-zinc-400 hover:text-white">
+              All latest news
+              <ArrowRightIcon className="h-4 w-4" />
+            </Link>
+          </div>
+          <div className="mt-7 grid gap-5 lg:grid-cols-2">
+            {[
+              { title: "Latest News", stories: latestNews },
+              { title: "Trending Stories", stories: trendingNews },
+            ].map((group) => (
+              <section key={group.title} className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:p-7">
+                <h3 className="text-lg font-black text-white">{group.title}</h3>
+                <ol className="mt-4 divide-y divide-white/8">
+                  {group.stories.map((item, index) => (
+                    <li key={item.storyId} className="grid grid-cols-[2rem_1fr] gap-3 py-4 first:pt-0 last:pb-0">
+                      <span className="text-lg font-black text-white/20">
+                        {String(index + 1).padStart(2, "0")}
+                      </span>
+                      <div>
+                        <VerificationBadge status={item.verification} compact />
+                        <Link
+                          href={`/stories/${item.slug}`}
+                          className="mt-2 block text-sm font-bold leading-5 text-zinc-200 hover:text-pink-200 sm:text-base sm:leading-6"
+                        >
+                          {item.headline}
+                        </Link>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            ))}
+          </div>
+        </section>
       </div>
     </article>
   );

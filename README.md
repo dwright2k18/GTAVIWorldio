@@ -3,10 +3,10 @@
 The source for an independent GTA VI news website, built with Next.js,
 TypeScript, Tailwind CSS, and the App Router.
 
-Phase 1 includes a responsive editorial homepage, mobile navigation, Latest
-filters, a 13-second Quick Hits interface, full article templates, local search,
-verification labels, structured data, robots, sitemap, Open Graph artwork, and
-a custom 404 page.
+Phase 1 includes a responsive editorial homepage, desktop and mobile navigation,
+Latest filters, a 13-second Quick Hits interface, full article templates, local
+search, a verification standards page, newsletter UI, structured data, robots,
+sitemap, Open Graph artwork, and a custom 404 page.
 
 ## Getting Started
 
@@ -31,13 +31,22 @@ pnpm build
 
 ## Content architecture
 
-Sample editorial data lives in `src/data/content.ts`. Every story has a central
+Editorial seed data lives in `src/data/content.ts`. Every story has a central
 Story ID, verification status, primary source, publication dates, related
-stories and videos, social distribution fields, and placeholder metrics. The
+stories and videos, social distribution fields, and initial ranking metrics. The
 model is intentionally database-ready without requiring a database for the MVP.
 
-All sample content and original placeholder artwork are labeled in the UI. The
-site does not use scraped game imagery or present invented announcements as
+`EditorialMedia` accepts an approved image source, focal point, alt text, and
+credit. `StoryArtwork` renders those sources through the optimized Next.js Image
+component and falls back to the original gradient art when no approved asset is
+available. Quick Hits accept an optional video source, poster, MIME type, and
+caption track; videos never autoplay.
+
+The newsletter component currently provides an honest pre-launch response and
+does not store email addresses. Its submit handler is the provider integration
+point for a later phase.
+
+The site does not scrape game imagery or present invented announcements as
 current news.
 
 ## Deploy on Vercel
