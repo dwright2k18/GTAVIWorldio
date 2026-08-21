@@ -1,4 +1,4 @@
-const fallbackUrl = "http://localhost:3000";
+const fallbackUrl = "https://gtaviworld.io";
 
 function enabled(value: string | undefined) {
   return value === "true";
@@ -13,12 +13,28 @@ function resolvePublicEmail() {
 }
 
 function resolveSiteUrl() {
-  const configuredUrl = process.env.NEXT_PUBLIC_SITE_URL;
-  const vercelUrl =
-    process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
-  const candidate = configuredUrl ?? (vercelUrl ? `https://${vercelUrl}` : fallbackUrl);
+  const configuredUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
 
-  return candidate.startsWith("http") ? candidate : `https://${candidate}`;
+  if (!configuredUrl) return fallbackUrl;
+
+  try {
+    const normalized = new URL(
+      configuredUrl.startsWith("http")
+        ? configuredUrl
+        : `https://${configuredUrl}`,
+    );
+    if (
+      normalized.protocol === "https:" &&
+      normalized.hostname !== "localhost" &&
+      !normalized.hostname.endsWith(".vercel.app")
+    ) {
+      return normalized.origin;
+    }
+  } catch {
+    // Invalid configuration falls back to the permanent canonical hostname.
+  }
+
+  return fallbackUrl;
 }
 
 export const siteConfig = {

@@ -1,11 +1,22 @@
 import Link from "next/link";
 
-export function Logo({ compact = false }: { compact?: boolean }) {
+export function Logo({
+  compact = false,
+  href = "/",
+  label = "GTA VI World home",
+  prefetch,
+}: {
+  compact?: boolean;
+  href?: string;
+  label?: string;
+  prefetch?: boolean;
+}) {
   return (
     <Link
-      href="/"
+      href={href}
+      prefetch={prefetch}
       className="group inline-flex min-h-11 items-center gap-2.5 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-pink-400"
-      aria-label="GTA VI World home"
+      aria-label={label}
     >
       <span className="grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-cyan-300 via-pink-400 to-orange-300 text-sm font-black text-[#090813] shadow-[0_0_24px_rgba(244,114,182,0.2)] transition-transform group-hover:-rotate-3">
         VI

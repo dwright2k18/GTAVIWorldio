@@ -3,14 +3,14 @@ import { siteFeatures } from "@/lib/site";
 const navigationItems = [
   { label: "Home", href: "/" },
   { label: "Latest", href: "/latest" },
-  { label: "News", href: "/latest?category=Official" },
+  { label: "News", href: "/news" },
   { label: "Videos", href: "/quick-hits#all-clips" },
   { label: "Quick Hits", href: "/quick-hits" },
-  { label: "Map", href: "/search?q=map" },
-  { label: "Characters", href: "/search?q=characters" },
-  { label: "Gameplay", href: "/search?q=gameplay" },
-  { label: "Rumors", href: "/latest?verification=RUMOR" },
-  { label: "Guides", href: "/search?q=guide" },
+  { label: "Map", href: "/map" },
+  { label: "Characters", href: "/characters" },
+  { label: "Gameplay", href: "/gameplay" },
+  { label: "Rumors", href: "/rumors" },
+  { label: "Guides", href: "/release-date" },
   { label: "Verification", href: "/verification" },
 ] as const;
 
@@ -31,11 +31,11 @@ export const footerNavigation = {
     ["Latest", "News", "Videos", "Quick Hits", "Map"].includes(item.label),
   ),
   Knowledge: [
-    { label: "Release date", href: "/search?q=release+date" },
-    { label: "Lucia", href: "/search?q=Lucia" },
-    { label: "Jason", href: "/search?q=Jason" },
-    { label: "Vice City", href: "/search?q=Vice+City" },
-    { label: "Platforms", href: "/search?q=platforms" },
+    { label: "Release date", href: "/release-date" },
+    { label: "Lucia", href: "/characters/lucia" },
+    { label: "Jason", href: "/characters/jason" },
+    { label: "Trailers", href: "/trailers" },
+    { label: "Online", href: "/online" },
   ],
   Standards: [
     { label: "Verification", href: "/verification" },

@@ -5,7 +5,9 @@ import { AnalyticsEvent } from "@/components/analytics-event";
 import { SearchIcon } from "@/components/icons";
 import { QuickHitCard } from "@/components/quick-hit-card";
 import { StoryCard } from "@/components/story-card";
+import { CmsStoryCard } from "@/components/cms-story-card";
 import { searchContent } from "@/data/content";
+import { searchPublishedCms } from "@/lib/cms/public-queries";
 import { siteFeatures } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -26,10 +28,11 @@ export default async function SearchPage({
 }) {
   const query = firstValue((await searchParams).q) ?? "";
   const results = searchContent(query);
+  const cmsStories = await searchPublishedCms(query);
   const liveQuickHits = siteFeatures.quickHits
     ? results.quickHits.filter((video) => Boolean(video.video))
     : [];
-  const resultCount = results.stories.length + liveQuickHits.length;
+  const resultCount = cmsStories.length + results.stories.length + liveQuickHits.length;
   const suggestions = ["Lucia", "Jason", "Map", "Vice City", "Trailer", "Gameplay"];
 
   return (
@@ -88,10 +91,22 @@ export default async function SearchPage({
             </p>
             {resultCount > 0 ? (
               <>
+                {cmsStories.length > 0 && (
+                  <section className="mt-6" aria-labelledby="cms-story-results">
+                    <h2 id="cms-story-results" className="text-2xl font-black text-white">
+                      Published newsroom stories
+                    </h2>
+                    <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                      {cmsStories.map((story) => (
+                        <CmsStoryCard key={story.id} story={story} />
+                      ))}
+                    </div>
+                  </section>
+                )}
                 {results.stories.length > 0 && (
                   <section className="mt-6" aria-labelledby="story-results">
                     <h2 id="story-results" className="text-2xl font-black text-white">
-                      Stories
+                      Editorial reference library
                     </h2>
                     <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
                       {results.stories.map((story) => (

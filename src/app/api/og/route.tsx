@@ -1,10 +1,8 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "GTA VI World — independent verified news and analysis";
-export const size = { width: 1200, height: 630 };
-export const contentType = "image/png";
+const size = { width: 1200, height: 630 };
 
-export default function OpenGraphImage() {
+export function GET() {
   return new ImageResponse(
     (
       <div
@@ -29,7 +27,8 @@ export default function OpenGraphImage() {
               alignItems: "center",
               justifyContent: "center",
               borderRadius: 18,
-              background: "linear-gradient(135deg, #67e8f9, #f472b6, #fdba74)",
+              background:
+                "linear-gradient(135deg, #67e8f9, #f472b6, #fdba74)",
               color: "#090813",
               fontSize: 28,
               fontWeight: 900,
@@ -37,13 +36,33 @@ export default function OpenGraphImage() {
           >
             VI
           </div>
-          <div style={{ fontSize: 38, fontWeight: 900, letterSpacing: -2 }}>GTAVIWORLD.IO</div>
+          <div
+            style={{ fontSize: 38, fontWeight: 900, letterSpacing: -2 }}
+          >
+            GTAVIWORLD.IO
+          </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ color: "#67e8f9", fontSize: 24, fontWeight: 800, letterSpacing: 5 }}>
+          <div
+            style={{
+              color: "#67e8f9",
+              fontSize: 24,
+              fontWeight: 800,
+              letterSpacing: 5,
+            }}
+          >
             VERIFIED GTA VI INTELLIGENCE
           </div>
-          <div style={{ marginTop: 18, maxWidth: 900, fontSize: 76, fontWeight: 900, lineHeight: 1.02, letterSpacing: -4 }}>
+          <div
+            style={{
+              marginTop: 18,
+              maxWidth: 900,
+              fontSize: 76,
+              fontWeight: 900,
+              lineHeight: 1.02,
+              letterSpacing: -4,
+            }}
+          >
             The signal beyond the noise.
           </div>
           <div style={{ marginTop: 24, color: "#d4d4d8", fontSize: 28 }}>
@@ -52,6 +71,11 @@ export default function OpenGraphImage() {
         </div>
       </div>
     ),
-    size,
+    {
+      ...size,
+      headers: {
+        "Cache-Control": "public, max-age=0, s-maxage=86400",
+      },
+    },
   );
 }
