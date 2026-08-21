@@ -1,3 +1,6 @@
 allowBuilds:
+  esbuild: true
   sharp: false
   unrs-resolver: false
+overrides:
+  "@esbuild-kit/core-utils>esbuild": 0.25.12
