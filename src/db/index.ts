@@ -5,17 +5,20 @@ import postgres from "postgres";
 
 import * as schema from "./schema";
 
+export function isDatabaseConfigured() {
+  return Boolean(process.env.POSTGRES_URL_NON_POOLING ?? process.env.POSTGRES_URL);
+}
+
 function databaseUrl() {
   // Prefer Supabase's session-pool endpoint. postgres-js can safely pipeline
   // newsroom reads there, while the transaction endpoint can stall under a
   // burst of related statements.
   const url = process.env.POSTGRES_URL_NON_POOLING ?? process.env.POSTGRES_URL;
 
-  if (!url) {
-    throw new Error("A PostgreSQL connection URL is not configured for this environment.");
-  }
-
-  return url;
+  // Git Previews intentionally do not receive Production's Supabase secrets.
+  // postgres-js connects lazily, and all credential-optional public queries
+  // return a safe empty result before this local fail-closed URL can be used.
+  return url ?? "postgres://preview_disabled:preview_disabled@127.0.0.1:1/preview_disabled";
 }
 
 const globalDatabase = globalThis as typeof globalThis & {

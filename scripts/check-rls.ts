@@ -25,6 +25,12 @@ type PolicyCase = {
 
 class PolicyTestRollback extends Error {}
 
+class PolicyCaseRollback extends Error {
+  constructor(readonly allowed: boolean) {
+    super("Rollback isolated policy-test case.");
+  }
+}
+
 async function setApiIdentity(sql: TransactionSql, apiRole: ApiRole, userId?: string) {
   await sql`
     select
@@ -43,15 +49,19 @@ async function runPolicyCase(sql: TransactionSql, testCase: PolicyCase) {
   let denialReason = "row hidden or changed by policy";
 
   try {
-    allowed = await sql.savepoint(async (testSql) => {
+    await sql.savepoint(async (testSql) => {
       await setApiIdentity(testSql, testCase.apiRole ?? "authenticated", testCase.userId);
       const changedOrVisible = await testCase.action(testSql);
       await testSql.unsafe("reset role");
-      return changedOrVisible;
+      throw new PolicyCaseRollback(changedOrVisible);
     });
   } catch (error) {
-    allowed = false;
-    denialReason = error instanceof Error ? error.message : "database rejected the operation";
+    if (error instanceof PolicyCaseRollback) {
+      allowed = error.allowed;
+    } else {
+      allowed = false;
+      denialReason = error instanceof Error ? error.message : "database rejected the operation";
+    }
   }
 
   const actual = allowed ? "ALLOW" : "DENY";
@@ -88,6 +98,10 @@ async function main() {
   const reviewStoryId = randomUUID();
   const deleteStoryId = randomUUID();
   const categoryId = randomUUID();
+  const monitoredSourceId = randomUUID();
+  const clusterId = randomUUID();
+  const assignedCandidateId = randomUUID();
+  const unassignedCandidateId = randomUUID();
 
   try {
     await client.begin(async (sql) => {
@@ -230,6 +244,103 @@ async function main() {
             ${bylineId},
             ${profiles.editor},
             ${sourceId},
+            ${profiles.editor}
+          )
+      `;
+
+      await sql`
+        insert into public.monitored_sources (
+          id,
+          name,
+          url,
+          domain,
+          source_type,
+          authority_tier,
+          is_first_party,
+          reliability_score,
+          connector_kind,
+          connector_config,
+          created_by
+        ) values (
+          ${monitoredSourceId},
+          'RLS Discovery Source',
+          ${`https://discovery.example.invalid/${runToken}`},
+          'discovery.example.invalid',
+          'JOURNALISM',
+          'TIER_2',
+          false,
+          80,
+          'MANUAL',
+          '{}'::jsonb,
+          ${profiles.editor}
+        )
+      `;
+
+      await sql`
+        insert into public.story_clusters (
+          id,
+          title,
+          normalized_event_key,
+          primary_event,
+          primary_source_id,
+          created_by
+        ) values (
+          ${clusterId},
+          'RLS discovery cluster',
+          ${`rls-discovery-${runToken}`},
+          'A policy-test discovery event.',
+          ${monitoredSourceId},
+          ${profiles.editor}
+        )
+      `;
+
+      await sql`
+        insert into public.discovery_candidates (
+          id,
+          cluster_id,
+          source_id,
+          title,
+          normalized_title,
+          source_url,
+          canonical_url,
+          source_hash,
+          content_hash,
+          status,
+          verification_recommendation,
+          confidence_score,
+          assigned_to,
+          created_by
+        ) values
+          (
+            ${assignedCandidateId},
+            ${clusterId},
+            ${monitoredSourceId},
+            'RLS assigned discovery candidate',
+            'rls assigned discovery candidate',
+            ${`https://discovery.example.invalid/${runToken}/assigned`},
+            ${`https://discovery.example.invalid/${runToken}/assigned`},
+            ${`source-${runToken}-assigned`},
+            ${`content-${runToken}-assigned`},
+            'DISCOVERED',
+            'CREDIBLE_REPORT',
+            65,
+            ${profiles.author},
+            ${profiles.editor}
+          ),
+          (
+            ${unassignedCandidateId},
+            ${clusterId},
+            ${monitoredSourceId},
+            'RLS unassigned discovery candidate',
+            'rls unassigned discovery candidate',
+            ${`https://discovery.example.invalid/${runToken}/unassigned`},
+            ${`https://discovery.example.invalid/${runToken}/unassigned`},
+            ${`source-${runToken}-unassigned`},
+            ${`content-${runToken}-unassigned`},
+            'DISCOVERED',
+            'RUMOR',
+            35,
+            null,
             ${profiles.editor}
           )
       `;
@@ -536,6 +647,287 @@ async function main() {
                 returning id
               `
             ).length > 0,
+        },
+        {
+          label: "anonymous users cannot read discovery candidates",
+          apiRole: "anon",
+          expected: "DENY",
+          action: async (testSql) => (await testSql`select id from public.discovery_candidates limit 1`).length > 0,
+        },
+        {
+          label: "inactive profiles cannot read discovery candidates",
+          userId: authUsers.inactive,
+          expected: "DENY",
+          action: async (testSql) => (await testSql`select id from public.discovery_candidates limit 1`).length > 0,
+        },
+        {
+          label: "authors can read assigned discovery candidates",
+          userId: authUsers.author,
+          expected: "ALLOW",
+          action: async (testSql) => (await testSql`select id from public.discovery_candidates where id = ${assignedCandidateId}`).length === 1,
+        },
+        {
+          label: "authors cannot read unassigned discovery candidates",
+          userId: authUsers.author,
+          expected: "DENY",
+          action: async (testSql) => (await testSql`select id from public.discovery_candidates where id = ${unassignedCandidateId}`).length > 0,
+        },
+        {
+          label: "authors can add attributed evidence to assigned candidates",
+          userId: authUsers.author,
+          expected: "ALLOW",
+          action: async (testSql) => (
+            await testSql`
+              insert into public.candidate_evidence (
+                candidate_id,
+                source_id,
+                source_url,
+                title,
+                authority_tier,
+                authority_score,
+                created_by
+              ) values (
+                ${assignedCandidateId},
+                ${monitoredSourceId},
+                ${`https://discovery.example.invalid/${runToken}/author`},
+                'Author supporting evidence',
+                'TIER_2',
+                80,
+                ${profiles.author}
+              )
+              returning id
+            `
+          ).length === 1,
+        },
+        {
+          label: "authors cannot spoof evidence authority",
+          userId: authUsers.author,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              insert into public.candidate_evidence (
+                candidate_id,
+                source_id,
+                source_url,
+                title,
+                authority_tier,
+                authority_score,
+                created_by
+              ) values (
+                ${assignedCandidateId},
+                ${monitoredSourceId},
+                ${`https://attacker.example.invalid/${runToken}/spoof`},
+                'Spoofed authority evidence',
+                'TIER_1',
+                100,
+                ${profiles.author}
+              )
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "authors cannot alter discovery verification",
+          userId: authUsers.author,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_candidates
+              set verification_recommendation = 'CONFIRMED', confidence_score = 100
+              where id = ${assignedCandidateId}
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "authors cannot reject discovery candidates",
+          userId: authUsers.author,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_candidates
+              set status = 'REJECTED'
+              where id = ${assignedCandidateId}
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "authors cannot manage monitored sources",
+          userId: authUsers.author,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              update public.monitored_sources
+              set is_active = true
+              where id = ${monitoredSourceId}
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "authors cannot append discovery audit records directly",
+          userId: authUsers.author,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              insert into public.discovery_audit_logs (
+                candidate_id,
+                actor_id,
+                actor_type,
+                action,
+                reason
+              ) values (
+                ${assignedCandidateId},
+                ${profiles.author},
+                'MANUAL',
+                'AUTHOR_DIRECT_AUDIT',
+                'This direct audit insert must be rejected.'
+              )
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "fact checkers can update candidate evidence fields",
+          userId: authUsers.factChecker,
+          expected: "ALLOW",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_candidates
+              set verification_recommendation = 'CREDIBLE_REPORT', confidence_score = 72,
+                  research_notes = 'Evidence reviewed by the fact-check policy test.'
+              where id = ${unassignedCandidateId}
+              returning id
+            `
+          ).length === 1,
+        },
+        {
+          label: "fact checkers cannot reject discovery candidates",
+          userId: authUsers.factChecker,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_candidates
+              set status = 'REJECTED'
+              where id = ${unassignedCandidateId}
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "fact checkers cannot rewrite discovery provenance",
+          userId: authUsers.factChecker,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_candidates
+              set canonical_url = ${`https://attacker.example.invalid/${runToken}`}
+              where id = ${unassignedCandidateId}
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "editors can triage discovery candidates",
+          userId: authUsers.editor,
+          expected: "ALLOW",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_candidates
+              set status = 'TRIAGED'
+              where id = ${unassignedCandidateId}
+              returning id
+            `
+          ).length === 1,
+        },
+        {
+          label: "editors can promote candidates only to their private draft",
+          userId: authUsers.editor,
+          expected: "ALLOW",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_candidates
+              set status = 'PROMOTED_TO_STORY', story_id = ${reviewStoryId}
+              where id = ${unassignedCandidateId}
+              returning id
+            `
+          ).length === 1,
+        },
+        {
+          label: "editors cannot attach candidates to approved or published content",
+          userId: authUsers.editor,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_candidates
+              set status = 'PROMOTED_TO_STORY', story_id = ${deleteStoryId}
+              where id = ${unassignedCandidateId}
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "editors cannot rewrite discovery provenance",
+          userId: authUsers.editor,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_candidates
+              set source_hash = 'rewritten-by-editor'
+              where id = ${unassignedCandidateId}
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "editors cannot change discovery automation settings",
+          userId: authUsers.editor,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_settings
+              set recurring_monitoring_enabled = true
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "editors cannot activate monitored sources",
+          userId: authUsers.editor,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              update public.monitored_sources
+              set is_active = true
+              where id = ${monitoredSourceId}
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "administrators can change discovery limits",
+          userId: authUsers.admin,
+          expected: "ALLOW",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_settings
+              set max_requests_per_day = 99
+              returning id
+            `
+          ).length === 1,
+        },
+        {
+          label: "administrators can delete discovery candidates",
+          userId: authUsers.admin,
+          expected: "ALLOW",
+          action: async (testSql) => (
+            await testSql`
+              delete from public.discovery_candidates
+              where id = ${unassignedCandidateId}
+              returning id
+            `
+          ).length === 1,
         },
       ];
 

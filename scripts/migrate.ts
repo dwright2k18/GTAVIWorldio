@@ -17,7 +17,7 @@ const database = drizzle(client);
 async function main() {
   try {
     await migrate(database, { migrationsFolder: "drizzle" });
-    console.log("Phase 3 database migrations completed.");
+    console.log("GTAVIWorldio database migrations completed.");
   } finally {
     await client.end();
   }

@@ -96,6 +96,110 @@ export const evergreenStatusEnum = pgEnum("evergreen_status", [
   "ARCHIVED",
 ]);
 
+export const sourceAuthorityTierEnum = pgEnum("source_authority_tier", [
+  "TIER_1",
+  "TIER_2",
+  "TIER_3",
+  "TIER_4",
+]);
+
+export const sourceConnectorKindEnum = pgEnum("source_connector_kind", [
+  "RSS",
+  "ATOM",
+  "HTML_LISTING",
+  "HTML_CHANGE",
+  "JSON_FEED",
+  "MANUAL",
+]);
+
+export const sourceHealthStatusEnum = pgEnum("source_health_status", [
+  "NOT_CHECKED",
+  "HEALTHY",
+  "DEGRADED",
+  "FAILED",
+  "PAUSED",
+  "CIRCUIT_OPEN",
+]);
+
+export const fetchRunStatusEnum = pgEnum("fetch_run_status", [
+  "SUCCESS",
+  "PARTIAL",
+  "FAILED",
+  "SKIPPED",
+  "CIRCUIT_OPEN",
+  "TEST_ONLY",
+]);
+
+export const sourceChangeTypeEnum = pgEnum("source_change_type", [
+  "NEW_ARTICLE",
+  "TEXT_UPDATE",
+  "RELEASE_DATE_CHANGE",
+  "PLATFORM_CHANGE",
+  "PRICE_CHANGE",
+  "PREORDER_CHANGE",
+  "TRAILER_ADDED",
+  "SCREENSHOT_ADDED",
+  "METADATA_CHANGE",
+  "UNKNOWN",
+]);
+
+export const candidateStatusEnum = pgEnum("candidate_status", [
+  "DISCOVERED",
+  "TRIAGED",
+  "RESEARCHING",
+  "DUPLICATE",
+  "REJECTED",
+  "PROMOTED_TO_STORY",
+  "ARCHIVED",
+]);
+
+export const duplicateStatusEnum = pgEnum("duplicate_status", [
+  "NEW_STORY",
+  "RELATED",
+  "LIKELY_DUPLICATE",
+  "DUPLICATE",
+]);
+
+export const clusterStatusEnum = pgEnum("cluster_status", [
+  "OPEN",
+  "MONITORING",
+  "RESOLVED",
+  "MERGED",
+  "ARCHIVED",
+]);
+
+export const mediaRightsStatusEnum = pgEnum("media_rights_status", [
+  "OFFICIAL_EMBEDDABLE",
+  "OWNED",
+  "LICENSED",
+  "COMMENTARY_ONLY",
+  "DO_NOT_HOST",
+  "UNKNOWN_RIGHTS",
+]);
+
+export const discoveryAlertTypeEnum = pgEnum("discovery_alert_type", [
+  "URGENT_OFFICIAL_UPDATE",
+  "HIGH_VALUE_SEO_OPPORTUNITY",
+  "POSSIBLE_DUPLICATE",
+  "CONFLICTING_SOURCES",
+  "ALLEGED_LEAK_TRENDING",
+  "EVERGREEN_PAGE_NEEDS_UPDATE",
+  "SOURCE_CONNECTOR_FAILURE",
+  "COST_LIMIT_WARNING",
+]);
+
+export const discoveryAlertStatusEnum = pgEnum("discovery_alert_status", [
+  "NEW",
+  "ACKNOWLEDGED",
+  "RESOLVED",
+  "DISMISSED",
+]);
+
+export const discoveryActorTypeEnum = pgEnum("discovery_actor_type", [
+  "MANUAL",
+  "AUTOMATION",
+]);
+
 export type ArticleBodyBlock =
   | { type: "paragraph"; content: string }
   | { type: "heading"; level: 2 | 3; content: string }
@@ -661,6 +765,477 @@ export const redirects = pgTable(
   ],
 );
 
+export const monitoredSources = pgTable(
+  "monitored_sources",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    domain: text("domain").notNull(),
+    sourceType: sourceTypeEnum("source_type").notNull(),
+    authorityTier: sourceAuthorityTierEnum("authority_tier").notNull(),
+    isFirstParty: boolean("is_first_party").notNull().default(false),
+    reliabilityScore: integer("reliability_score").notNull().default(50),
+    historicalAccuracyNotes: text("historical_accuracy_notes"),
+    connectorKind: sourceConnectorKindEnum("connector_kind").notNull(),
+    connectorConfig: jsonb("connector_config")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    healthStatus: sourceHealthStatusEnum("health_status")
+      .notNull()
+      .default("NOT_CHECKED"),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    lastSuccessfulFetchAt: timestamp("last_successful_fetch_at", {
+      withTimezone: true,
+    }),
+    lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    lastHttpStatus: integer("last_http_status"),
+    lastError: text("last_error"),
+    circuitOpenUntil: timestamp("circuit_open_until", { withTimezone: true }),
+    nextCheckAt: timestamp("next_check_at", { withTimezone: true }),
+    isActive: boolean("is_active").notNull().default(false),
+    rateLimitPerHour: integer("rate_limit_per_hour").notNull().default(6),
+    minCheckIntervalMinutes: integer("min_check_interval_minutes")
+      .notNull()
+      .default(30),
+    termsPolicyNotes: text("terms_policy_notes"),
+    createdBy: uuid("created_by").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("monitored_sources_url_uidx").on(table.url),
+    index("monitored_sources_active_tier_idx").on(
+      table.isActive,
+      table.authorityTier,
+    ),
+    index("monitored_sources_health_idx").on(table.healthStatus),
+    index("monitored_sources_next_check_idx").on(table.nextCheckAt),
+  ],
+);
+
+export const sourceFetchRuns = pgTable(
+  "source_fetch_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => monitoredSources.id, { onDelete: "cascade" }),
+    status: fetchRunStatusEnum("status").notNull(),
+    isTestRun: boolean("is_test_run").notNull().default(false),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    httpStatus: integer("http_status"),
+    requestCount: integer("request_count").notNull().default(0),
+    responseBytes: integer("response_bytes").notNull().default(0),
+    itemsSeen: integer("items_seen").notNull().default(0),
+    candidatesCreated: integer("candidates_created").notNull().default(0),
+    duplicatesSkipped: integer("duplicates_skipped").notNull().default(0),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    estimatedCostMicros: integer("estimated_cost_micros").notNull().default(0),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+  },
+  (table) => [
+    index("source_fetch_runs_source_date_idx").on(
+      table.sourceId,
+      table.startedAt,
+    ),
+    index("source_fetch_runs_status_idx").on(table.status),
+  ],
+);
+
+export const sourceSnapshots = pgTable(
+  "source_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => monitoredSources.id, { onDelete: "cascade" }),
+    normalizedUrl: text("normalized_url").notNull(),
+    title: text("title"),
+    sourceHash: text("source_hash").notNull(),
+    contentHash: text("content_hash").notNull(),
+    changeType: sourceChangeTypeEnum("change_type")
+      .notNull()
+      .default("UNKNOWN"),
+    meaningfulChange: boolean("meaningful_change").notNull().default(false),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    checkedAt: timestamp("checked_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+  },
+  (table) => [
+    uniqueIndex("source_snapshots_source_content_uidx").on(
+      table.sourceId,
+      table.contentHash,
+    ),
+    index("source_snapshots_checked_idx").on(table.checkedAt),
+  ],
+);
+
+export const storyClusters = pgTable(
+  "story_clusters",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    title: text("title").notNull(),
+    normalizedEventKey: text("normalized_event_key").notNull(),
+    primaryEvent: text("primary_event").notNull(),
+    primarySourceId: uuid("primary_source_id").references(
+      () => monitoredSources.id,
+      { onDelete: "set null" },
+    ),
+    status: clusterStatusEnum("status").notNull().default("OPEN"),
+    verificationStatus: verificationStatusEnum("verification_status")
+      .notNull()
+      .default("SPECULATION"),
+    confidenceScore: integer("confidence_score").notNull().default(0),
+    communityReaction: text("community_reaction"),
+    conflictingClaims: jsonb("conflicting_claims")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default([]),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdBy: uuid("created_by").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("story_clusters_event_key_uidx").on(table.normalizedEventKey),
+    index("story_clusters_status_seen_idx").on(table.status, table.lastSeenAt),
+  ],
+);
+
+export const discoveryCandidates = pgTable(
+  "discovery_candidates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clusterId: uuid("cluster_id").references(() => storyClusters.id, {
+      onDelete: "set null",
+    }),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => monitoredSources.id, { onDelete: "restrict" }),
+    title: text("title").notNull(),
+    normalizedTitle: text("normalized_title").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    canonicalUrl: text("canonical_url").notNull(),
+    sourceAuthor: text("source_author"),
+    sourcePublishedAt: timestamp("source_published_at", { withTimezone: true }),
+    excerpt: text("excerpt"),
+    sourceHash: text("source_hash").notNull(),
+    contentHash: text("content_hash").notNull(),
+    changeType: sourceChangeTypeEnum("change_type")
+      .notNull()
+      .default("NEW_ARTICLE"),
+    status: candidateStatusEnum("status").notNull().default("DISCOVERED"),
+    duplicateStatus: duplicateStatusEnum("duplicate_status")
+      .notNull()
+      .default("NEW_STORY"),
+    verificationRecommendation: verificationStatusEnum(
+      "verification_recommendation",
+    )
+      .notNull()
+      .default("SPECULATION"),
+    confidenceScore: integer("confidence_score").notNull().default(0),
+    newsworthinessScore: integer("newsworthiness_score").notNull().default(0),
+    seoOpportunityScore: integer("seo_opportunity_score")
+      .notNull()
+      .default(0),
+    trendScore: integer("trend_score").notNull().default(0),
+    contentOpportunityScore: integer("content_opportunity_score")
+      .notNull()
+      .default(0),
+    quickHitScore: integer("quick_hit_score").notNull().default(0),
+    primaryVideoScore: integer("primary_video_score").notNull().default(0),
+    primaryTopic: text("primary_topic"),
+    secondaryTopics: text("secondary_topics").array().notNull().default([]),
+    searchIntent: text("search_intent"),
+    suggestedKeywords: text("suggested_keywords").array().notNull().default([]),
+    evergreenUpdateRecommended: boolean("evergreen_update_recommended")
+      .notNull()
+      .default(false),
+    evergreenPageId: uuid("evergreen_page_id").references(
+      () => evergreenPages.id,
+      { onDelete: "set null" },
+    ),
+    evergreenRecommendation: text("evergreen_recommendation"),
+    internalLinkSuggestions: jsonb("internal_link_suggestions")
+      .$type<Array<{ path: string; reason: string }>>()
+      .notNull()
+      .default([]),
+    knownFacts: jsonb("known_facts")
+      .$type<Array<{ fact: string; sourceUrl: string }>>()
+      .notNull()
+      .default([]),
+    uncertainties: text("uncertainties").array().notNull().default([]),
+    exactQuotes: jsonb("exact_quotes")
+      .$type<Array<{ text: string; speaker?: string; sourceUrl: string; locator?: string }>>()
+      .notNull()
+      .default([]),
+    conflictingClaims: jsonb("conflicting_claims")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default([]),
+    communityQuestions: text("community_questions").array().notNull().default([]),
+    researchNotes: text("research_notes"),
+    suggestedHeadline: text("suggested_headline"),
+    suggestedSummary: text("suggested_summary"),
+    suggestedSeoTitle: text("suggested_seo_title"),
+    suggestedMetaDescription: text("suggested_meta_description"),
+    suggestedHook: text("suggested_hook"),
+    quickHitAngle: text("quick_hit_angle"),
+    primaryVideoAngle: text("primary_video_angle"),
+    storyAngles: text("story_angles").array().notNull().default([]),
+    visualAssetSuggestions: text("visual_asset_suggestions")
+      .array()
+      .notNull()
+      .default([]),
+    mediaRightsStatus: mediaRightsStatusEnum("media_rights_status")
+      .notNull()
+      .default("UNKNOWN_RIGHTS"),
+    assignedTo: uuid("assigned_to").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+    storyId: uuid("story_id").references(() => stories.id, {
+      onDelete: "set null",
+    }),
+    isTest: boolean("is_test").notNull().default(false),
+    discoveredAt: timestamp("discovered_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastUpdatedAt: timestamp("last_updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdBy: uuid("created_by").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("discovery_candidates_source_version_uidx").on(
+      table.sourceId,
+      table.canonicalUrl,
+      table.contentHash,
+    ),
+    index("discovery_candidates_status_priority_idx").on(
+      table.status,
+      table.newsworthinessScore,
+    ),
+    index("discovery_candidates_cluster_idx").on(table.clusterId),
+    index("discovery_candidates_source_date_idx").on(
+      table.sourceId,
+      table.discoveredAt,
+    ),
+    index("discovery_candidates_seo_idx").on(table.seoOpportunityScore),
+    index("discovery_candidates_test_idx").on(table.isTest),
+  ],
+);
+
+export const candidateEvidence = pgTable(
+  "candidate_evidence",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    sourceId: uuid("source_id").references(() => monitoredSources.id, {
+      onDelete: "set null",
+    }),
+    sourceUrl: text("source_url").notNull(),
+    title: text("title").notNull(),
+    author: text("author"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    authorityTier: sourceAuthorityTierEnum("authority_tier").notNull(),
+    authorityScore: integer("authority_score").notNull().default(0),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    isCorroborating: boolean("is_corroborating").notNull().default(false),
+    extractedFacts: text("extracted_facts").array().notNull().default([]),
+    exactQuotes: jsonb("exact_quotes")
+      .$type<Array<{ text: string; speaker?: string; locator?: string }>>()
+      .notNull()
+      .default([]),
+    verificationNotes: text("verification_notes"),
+    rightsNotes: text("rights_notes"),
+    createdBy: uuid("created_by").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("candidate_evidence_candidate_url_uidx").on(
+      table.candidateId,
+      table.sourceUrl,
+    ),
+    index("candidate_evidence_candidate_idx").on(table.candidateId),
+  ],
+);
+
+export const discoveryAlerts = pgTable(
+  "discovery_alerts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id").references(() => discoveryCandidates.id, {
+      onDelete: "cascade",
+    }),
+    clusterId: uuid("cluster_id").references(() => storyClusters.id, {
+      onDelete: "cascade",
+    }),
+    sourceId: uuid("source_id").references(() => monitoredSources.id, {
+      onDelete: "cascade",
+    }),
+    alertType: discoveryAlertTypeEnum("alert_type").notNull(),
+    status: discoveryAlertStatusEnum("status").notNull().default("NEW"),
+    priority: integer("priority").notNull().default(50),
+    title: text("title").notNull(),
+    detail: text("detail").notNull(),
+    acknowledgedBy: uuid("acknowledged_by").references(
+      () => editorProfiles.id,
+      { onDelete: "set null" },
+    ),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("discovery_alerts_status_priority_idx").on(
+      table.status,
+      table.priority,
+    ),
+  ],
+);
+
+export const discoveryAuditLogs = pgTable(
+  "discovery_audit_logs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id").references(() => discoveryCandidates.id, {
+      onDelete: "set null",
+    }),
+    clusterId: uuid("cluster_id").references(() => storyClusters.id, {
+      onDelete: "set null",
+    }),
+    storyId: uuid("story_id").references(() => stories.id, {
+      onDelete: "set null",
+    }),
+    actorId: uuid("actor_id").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+    actorType: discoveryActorTypeEnum("actor_type").notNull(),
+    action: text("action").notNull(),
+    reason: text("reason").notNull(),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("discovery_audit_candidate_date_idx").on(
+      table.candidateId,
+      table.createdAt,
+    ),
+    index("discovery_audit_action_idx").on(table.action),
+  ],
+);
+
+export const discoverySettings = pgTable("discovery_settings", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  recurringMonitoringEnabled: boolean("recurring_monitoring_enabled")
+    .notNull()
+    .default(false),
+  automaticDraftingEnabled: boolean("automatic_drafting_enabled")
+    .notNull()
+    .default(false),
+  deepResearchEnabled: boolean("deep_research_enabled")
+    .notNull()
+    .default(false),
+  maxRequestsPerDay: integer("max_requests_per_day").notNull().default(100),
+  maxCandidatesPerRun: integer("max_candidates_per_run").notNull().default(20),
+  maxAiTriageCallsPerDay: integer("max_ai_triage_calls_per_day")
+    .notNull()
+    .default(0),
+  maxAiResearchCallsPerDay: integer("max_ai_research_calls_per_day")
+    .notNull()
+    .default(0),
+  maxEstimatedMonthlyCostCents: integer("max_estimated_monthly_cost_cents")
+    .notNull()
+    .default(0),
+  retentionDays: integer("retention_days").notNull().default(30),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const discoveryUsageDaily = pgTable(
+  "discovery_usage_daily",
+  {
+    usageDate: text("usage_date").primaryKey(),
+    requestCount: integer("request_count").notNull().default(0),
+    responseBytes: integer("response_bytes").notNull().default(0),
+    candidatesCreated: integer("candidates_created").notNull().default(0),
+    aiTriageCalls: integer("ai_triage_calls").notNull().default(0),
+    aiResearchCalls: integer("ai_research_calls").notNull().default(0),
+    estimatedCostMicros: integer("estimated_cost_micros").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("discovery_usage_updated_idx").on(table.updatedAt)],
+);
+
 export type StoryRecord = typeof stories.$inferSelect;
 export type NewStoryRecord = typeof stories.$inferInsert;
 export type EditorProfile = typeof editorProfiles.$inferSelect;
+export type MonitoredSource = typeof monitoredSources.$inferSelect;
+export type DiscoveryCandidate = typeof discoveryCandidates.$inferSelect;
+export type StoryCluster = typeof storyClusters.$inferSelect;

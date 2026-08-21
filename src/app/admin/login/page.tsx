@@ -1,5 +1,6 @@
 import { Logo } from "@/components/logo";
 import { getCurrentEditorAccess } from "@/lib/auth/dal";
+import { hasSupabasePublicConfig } from "@/lib/supabase/config";
 import { redirect } from "next/navigation";
 
 import { signIn } from "./actions";
@@ -13,6 +14,7 @@ type LoginPageProps = {
 export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
   const access = await getCurrentEditorAccess();
+  const signInAvailable = hasSupabasePublicConfig();
 
   if (access.status === "ACTIVE") {
     redirect(params.next?.startsWith("/admin") ? params.next : "/admin");
@@ -41,7 +43,11 @@ export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
             </p>
           ) : null}
 
-          <form action={signIn} className="mt-7 space-y-5">
+          {!signInAvailable ? (
+            <p className="mt-6 rounded-xl border border-amber-300/30 bg-amber-300/[0.06] px-4 py-3 text-sm leading-6 text-amber-100">
+              Newsroom sign-in is unavailable in this database-disconnected Preview environment.
+            </p>
+          ) : <form action={signIn} className="mt-7 space-y-5">
             <input name="next" type="hidden" value={params.next ?? "/admin"} />
             <label className="block text-sm font-bold">
               Email
@@ -70,7 +76,7 @@ export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
             >
               Enter newsroom
             </button>
-          </form>
+          </form>}
         </section>
       </div>
     </main>

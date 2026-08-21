@@ -7,6 +7,8 @@ import {
   authors,
   categories,
   corrections,
+  discoveryAlerts,
+  discoveryCandidates,
   evergreenPages,
   evergreenRevisions,
   evergreenSources,
@@ -21,11 +23,12 @@ import {
   storyTags,
   storyVideos,
   tags,
+  type EditorProfile,
   videos,
 } from "@/db/schema";
 import { evaluateStorySeo } from "@/lib/cms/seo";
 
-export async function getAdminDashboard() {
+export async function getAdminDashboard(editor: EditorProfile) {
   const statusCounts = await db
     .select({ status: stories.status, total: count() })
     .from(stories)
@@ -45,8 +48,22 @@ export async function getAdminDashboard() {
     .orderBy(asc(evergreenPages.lastReviewedAt))
     .limit(5);
 
+  const candidateCounts = editor.role === "AUTHOR" ? [] : await db
+      .select({ status: discoveryCandidates.status, total: count() })
+      .from(discoveryCandidates)
+      .groupBy(discoveryCandidates.status);
+
+  const discoveryAlertRows = editor.role === "AUTHOR" ? [] : await db
+      .select()
+      .from(discoveryAlerts)
+      .where(inArray(discoveryAlerts.status, ["NEW", "ACKNOWLEDGED"]))
+      .orderBy(desc(discoveryAlerts.priority), desc(discoveryAlerts.createdAt))
+      .limit(5);
+
   return {
     counts: Object.fromEntries(statusCounts.map((row) => [row.status, Number(row.total)])),
+    candidateCounts: Object.fromEntries(candidateCounts.map((row) => [row.status, Number(row.total)])),
+    discoveryAlerts: discoveryAlertRows,
     scheduled,
     staleEvergreen,
   };
