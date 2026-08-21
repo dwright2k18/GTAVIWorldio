@@ -1,5 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRightIcon, SearchIcon } from "@/components/icons";
+
+export const metadata: Metadata = {
+  title: "Page Not Found",
+  alternates: { canonical: null },
+  robots: { index: false, follow: false },
+};
 
 export default function NotFound() {
   return (
