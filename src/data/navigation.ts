@@ -1,4 +1,6 @@
-export const primaryNavigation = [
+import { siteFeatures } from "@/lib/site";
+
+const navigationItems = [
   { label: "Home", href: "/" },
   { label: "Latest", href: "/latest" },
   { label: "News", href: "/latest?category=Official" },
@@ -12,6 +14,12 @@ export const primaryNavigation = [
   { label: "Verification", href: "/verification" },
 ] as const;
 
+const quickHitLabels = new Set(["Videos", "Quick Hits"]);
+
+export const primaryNavigation = navigationItems.filter(
+  (item) => siteFeatures.quickHits || !quickHitLabels.has(item.label),
+);
+
 export const desktopNavigation = primaryNavigation.filter((item) =>
   ["Latest", "News", "Videos", "Quick Hits", "Map", "Characters", "Rumors"].includes(
     item.label,
@@ -19,7 +27,9 @@ export const desktopNavigation = primaryNavigation.filter((item) =>
 );
 
 export const footerNavigation = {
-  Explore: primaryNavigation.slice(1, 6),
+  Explore: primaryNavigation.filter((item) =>
+    ["Latest", "News", "Videos", "Quick Hits", "Map"].includes(item.label),
+  ),
   Knowledge: [
     { label: "Release date", href: "/search?q=release+date" },
     { label: "Lucia", href: "/search?q=Lucia" },

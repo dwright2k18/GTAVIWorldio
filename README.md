@@ -61,6 +61,18 @@ No environment variables are required for preview deployments. Development and
 preview builds default to `noindex` so pre-launch content cannot enter search
 results accidentally.
 
+## Pre-launch feature gates
+
+The following public environment variables default to off. Enable them only
+after their live editorial inputs are ready:
+
+- `NEXT_PUBLIC_BREAKING_ENABLED=true` — requires an active, time-sensitive item.
+- `NEXT_PUBLIC_AUDIENCE_RANKINGS_ENABLED=true` — requires real audience metrics.
+- `NEXT_PUBLIC_QUICK_HITS_ENABLED=true` — also requires approved video assets on
+  the Quick Hit records; artwork-only records stay hidden.
+- `NEXT_PUBLIC_CONTACT_EMAIL=newsroom@example.com` — publishes the monitored
+  address on Contact and Corrections. Without it, both pages remain pre-launch.
+
 Before a public production launch, complete editorial and legal approval, connect
 a monitored contact route, confirm the canonical domain, and set:
 

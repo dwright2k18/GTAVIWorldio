@@ -2,6 +2,11 @@ import type { Metadata } from "next";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { QuickHitCard } from "@/components/quick-hit-card";
 import { quickHits } from "@/data/content";
+import { siteFeatures } from "@/lib/site";
+
+const liveQuickHits = siteFeatures.quickHits
+  ? quickHits.filter((video) => Boolean(video.video))
+  : [];
 
 export const metadata: Metadata = {
   title: "GTA VI Quick Hits",
@@ -14,9 +19,32 @@ export const metadata: Metadata = {
       "Browse the 13-second vertical GTA VI interface with visible source and verification labels.",
     url: "/quick-hits",
   },
+  robots:
+    liveQuickHits.length > 0
+      ? undefined
+      : { index: false, follow: false },
 };
 
 export default function QuickHitsPage() {
+  if (liveQuickHits.length === 0) {
+    return (
+      <div className="min-h-[68vh] py-10 sm:py-14">
+        <div className="site-shell">
+          <Breadcrumbs items={[{ label: "Home", href: "/" }, { label: "Quick Hits" }]} />
+          <div className="mx-auto mt-16 max-w-3xl rounded-3xl border border-white/10 bg-white/[0.03] p-8 text-center sm:p-12">
+            <p className="eyebrow">Vertical newsroom</p>
+            <h1 className="mt-4 text-balance text-4xl font-black tracking-[-0.055em] text-white sm:text-6xl">
+              Quick Hits are not active yet
+            </h1>
+            <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-zinc-400 sm:text-lg">
+              The 9:16 video system is ready. This feed will open after approved clips and their source stories are connected.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen py-10 sm:py-14">
       <div className="site-shell">
@@ -45,11 +73,11 @@ export default function QuickHitsPage() {
               </h2>
             </div>
             <p className="text-xs font-bold tracking-widest text-zinc-600 uppercase">
-              {quickHits.length} quick hits
+              {liveQuickHits.length} quick hits
             </p>
           </div>
           <div className="mt-7 grid gap-x-4 gap-y-10 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {quickHits.map((video) => (
+            {liveQuickHits.map((video) => (
               <QuickHitCard key={video.videoId} video={video} />
             ))}
           </div>

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PolicyPage } from "@/components/policy-page";
+import { siteConfig } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Corrections Policy",
@@ -44,7 +45,15 @@ export default function CorrectionsPage() {
           title: "How to request a review",
           content: (
             <p>
-              Before public launch, a monitored correction address will be added to the <Link href="/contact">contact page</Link>. A useful request identifies the page, the precise statement at issue, the proposed correction, and supporting primary evidence. This staging site does not currently collect submissions.
+              {siteConfig.contactEmail ? (
+                <>
+                  Send correction requests to <a href={`mailto:${siteConfig.contactEmail}`}>{siteConfig.contactEmail}</a>. A useful request identifies the page, the precise statement at issue, the proposed correction, and supporting primary evidence.
+                </>
+              ) : (
+                <>
+                  Before public launch, a monitored correction address will be added to the <Link href="/contact">contact page</Link>. A useful request identifies the page, the precise statement at issue, the proposed correction, and supporting primary evidence. This staging site does not currently collect submissions.
+                </>
+              )}
             </p>
           ),
         },

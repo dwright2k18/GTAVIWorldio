@@ -18,8 +18,10 @@ import {
   verificationDetails,
 } from "@/data/content";
 import { formatEditorialDate } from "@/lib/format";
-import { absoluteUrl, siteConfig } from "@/lib/site";
+import { absoluteUrl, siteConfig, siteFeatures } from "@/lib/site";
 import type { ArticleBlock } from "@/lib/types";
+
+export const dynamicParams = false;
 
 export function generateStaticParams() {
   return stories.map((story) => ({ slug: story.slug }));
@@ -95,7 +97,9 @@ export default async function StoryPage({
   if (!story) notFound();
 
   const relatedStories = getRelatedStories(story);
-  const relatedQuickHits = getRelatedQuickHits(story);
+  const relatedQuickHits = siteFeatures.quickHits
+    ? getRelatedQuickHits(story).filter((video) => Boolean(video.video))
+    : [];
   const latestNews = stories
     .filter((candidate) => candidate.storyId !== story.storyId)
     .sort(
@@ -103,10 +107,12 @@ export default async function StoryPage({
         new Date(b.datePublished).getTime() - new Date(a.datePublished).getTime(),
     )
     .slice(0, 4);
-  const trendingNews = [...stories]
-    .filter((candidate) => candidate.storyId !== story.storyId)
-    .sort((a, b) => b.metrics.trendingScore - a.metrics.trendingScore)
-    .slice(0, 4);
+  const trendingNews = siteFeatures.audienceRankings
+    ? [...stories]
+        .filter((candidate) => candidate.storyId !== story.storyId)
+        .sort((a, b) => b.metrics.trendingScore - a.metrics.trendingScore)
+        .slice(0, 4)
+    : [];
   const sourceUrl = story.source.url.startsWith("http")
     ? story.source.url
     : absoluteUrl(story.source.url);
@@ -294,10 +300,16 @@ export default async function StoryPage({
               <ArrowRightIcon className="h-4 w-4" />
             </Link>
           </div>
-          <div className="mt-7 grid gap-5 lg:grid-cols-2">
+          <div
+            className={`mt-7 grid gap-5 ${
+              siteFeatures.audienceRankings ? "lg:grid-cols-2" : ""
+            }`}
+          >
             {[
               { title: "Latest News", stories: latestNews },
-              { title: "Trending Stories", stories: trendingNews },
+              ...(siteFeatures.audienceRankings
+                ? [{ title: "Trending Stories", stories: trendingNews }]
+                : []),
             ].map((group) => (
               <section key={group.title} className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:p-7">
                 <h3 className="text-lg font-black text-white">{group.title}</h3>

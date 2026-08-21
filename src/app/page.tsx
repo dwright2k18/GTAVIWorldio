@@ -15,33 +15,44 @@ import {
   verificationDetails,
 } from "@/data/content";
 import { formatEditorialDate } from "@/lib/format";
+import { siteFeatures } from "@/lib/site";
 import { verificationStatuses } from "@/lib/types";
 
 export default function Home() {
   const latestStories = stories.slice(1, 5);
-  const trendingStories = [...stories]
-    .sort((a, b) => b.metrics.trendingScore - a.metrics.trendingScore)
-    .slice(0, 5);
-  const mostPopularStories = [...stories]
-    .sort((a, b) => b.metrics.views - a.metrics.views)
-    .slice(0, 3);
+  const trendingStories = siteFeatures.audienceRankings
+    ? [...stories]
+        .sort((a, b) => b.metrics.trendingScore - a.metrics.trendingScore)
+        .slice(0, 5)
+    : [];
+  const mostPopularStories = siteFeatures.audienceRankings
+    ? [...stories].sort((a, b) => b.metrics.views - a.metrics.views).slice(0, 3)
+    : [];
+  const liveQuickHits = siteFeatures.quickHits
+    ? quickHits.filter((video) => Boolean(video.video))
+    : [];
+  const todayLinks = [
+    ...(siteFeatures.breaking ? [["Breaking", "#breaking"]] : []),
+    ["Latest", "#latest"],
+    ...(siteFeatures.audienceRankings
+      ? [
+          ["Trending", "#trending"],
+          ["Most Popular", "#popular"],
+        ]
+      : []),
+    ...(liveQuickHits.length > 0 ? [["Quick Hits", "#quick-hits"]] : []),
+  ];
 
   return (
     <div className="min-h-screen bg-[#090813] text-white">
-      <BreakingNewsBar />
+      {siteFeatures.breaking && <BreakingNewsBar />}
 
       <nav className="border-b border-white/8 bg-[#090813]" aria-label="Today on GTA VI World">
         <div className="scrollbar-hidden site-shell flex min-h-12 items-center gap-1 overflow-x-auto py-1.5">
           <span className="mr-2 shrink-0 text-[0.62rem] font-black tracking-[0.18em] text-zinc-600 uppercase">
             Today
           </span>
-          {[
-            ["Breaking", "#breaking"],
-            ["Latest", "#latest"],
-            ["Trending", "#trending"],
-            ["Quick Hits", "#quick-hits"],
-            ["Most Popular", "#popular"],
-          ].map(([label, href]) => (
+          {todayLinks.map(([label, href]) => (
             <a
               key={label}
               href={href}
@@ -108,13 +119,24 @@ export default function Home() {
             description="The newest reporting, analysis, and reference updates—each clearly labeled so readers can separate facts from interpretation."
             link={{ label: "All latest", href: "/latest" }}
           />
-          <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
-            <div className="grid gap-5 sm:grid-cols-2">
+          <div
+            className={`grid gap-8 ${
+              siteFeatures.audienceRankings
+                ? "lg:grid-cols-[minmax(0,1fr)_22rem]"
+                : ""
+            }`}
+          >
+            <div
+              className={`grid gap-5 sm:grid-cols-2 ${
+                siteFeatures.audienceRankings ? "" : "lg:grid-cols-4"
+              }`}
+            >
               {latestStories.map((story) => (
                 <StoryCard key={story.storyId} story={story} />
               ))}
             </div>
-            <aside id="trending" className="scroll-mt-24 rounded-3xl border border-white/10 bg-white/[0.03] p-6 sm:p-7">
+            {siteFeatures.audienceRankings && (
+              <aside id="trending" className="scroll-mt-24 rounded-3xl border border-white/10 bg-white/[0.03] p-6 sm:p-7">
               <div className="flex items-center justify-between gap-4">
                 <p className="eyebrow">Reader ranking</p>
                 <span className="inline-flex items-center gap-2 text-[0.62rem] font-black tracking-[0.14em] text-zinc-500 uppercase">
@@ -129,12 +151,14 @@ export default function Home() {
               <div className="mt-6">
                 <TrendingList stories={trendingStories} />
               </div>
-            </aside>
+              </aside>
+            )}
           </div>
         </div>
       </section>
 
-      <section id="quick-hits" className="scroll-mt-24 py-16 sm:py-20">
+      {liveQuickHits.length > 0 && (
+        <section id="quick-hits" className="scroll-mt-24 py-16 sm:py-20">
         <div className="site-shell">
           <SectionHeading
             eyebrow="13-second intelligence"
@@ -143,14 +167,16 @@ export default function Home() {
             link={{ label: "Open Quick Hits", href: "/quick-hits" }}
           />
           <div className="scrollbar-hidden grid grid-flow-col auto-cols-[78%] gap-4 overflow-x-auto pb-4 sm:auto-cols-[45%] lg:grid-flow-row lg:grid-cols-3 lg:overflow-visible">
-            {quickHits.slice(0, 3).map((video) => (
+            {liveQuickHits.slice(0, 3).map((video) => (
               <QuickHitCard key={video.videoId} video={video} />
             ))}
           </div>
         </div>
-      </section>
+        </section>
+      )}
 
-      <section id="popular" className="scroll-mt-24 border-t border-white/8 bg-[#0c0b13] py-16 sm:py-20">
+      {siteFeatures.audienceRankings && (
+        <section id="popular" className="scroll-mt-24 border-t border-white/8 bg-[#0c0b13] py-16 sm:py-20">
         <div className="site-shell">
           <SectionHeading
             eyebrow="The stories readers open next"
@@ -164,7 +190,8 @@ export default function Home() {
             ))}
           </div>
         </div>
-      </section>
+        </section>
+      )}
 
       <NewsletterSignup />
 

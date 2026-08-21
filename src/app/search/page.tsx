@@ -6,10 +6,11 @@ import { SearchIcon } from "@/components/icons";
 import { QuickHitCard } from "@/components/quick-hit-card";
 import { StoryCard } from "@/components/story-card";
 import { searchContent } from "@/data/content";
+import { siteFeatures } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Search",
-  description: "Search GTA VI World stories, analysis, characters, locations, and Quick Hits.",
+  description: "Search GTA VI World stories, analysis, characters, and locations.",
   alternates: { canonical: "/search" },
   robots: { index: false, follow: false },
 };
@@ -25,7 +26,10 @@ export default async function SearchPage({
 }) {
   const query = firstValue((await searchParams).q) ?? "";
   const results = searchContent(query);
-  const resultCount = results.stories.length + results.quickHits.length;
+  const liveQuickHits = siteFeatures.quickHits
+    ? results.quickHits.filter((video) => Boolean(video.video))
+    : [];
+  const resultCount = results.stories.length + liveQuickHits.length;
   const suggestions = ["Lucia", "Jason", "Map", "Vice City", "Trailer", "Gameplay"];
 
   return (
@@ -45,7 +49,7 @@ export default async function SearchPage({
           </h1>
           <form action="/search" className="relative mt-8" role="search">
             <label htmlFor="site-search" className="sr-only">
-              Search stories and quick hits
+              Search stories
             </label>
             <SearchIcon className="pointer-events-none absolute top-1/2 left-5 h-5 w-5 -translate-y-1/2 text-zinc-500" />
             <input
@@ -96,13 +100,13 @@ export default async function SearchPage({
                     </div>
                   </section>
                 )}
-                {results.quickHits.length > 0 && (
+                {liveQuickHits.length > 0 && (
                   <section className="mt-14" aria-labelledby="video-results">
                     <h2 id="video-results" className="text-2xl font-black text-white">
                       Quick Hits
                     </h2>
                     <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-                      {results.quickHits.map((video) => (
+                      {liveQuickHits.map((video) => (
                         <QuickHitCard key={video.videoId} video={video} />
                       ))}
                     </div>
@@ -120,7 +124,7 @@ export default async function SearchPage({
           <div className="mx-auto mt-16 max-w-2xl rounded-3xl border border-white/10 bg-white/[0.03] p-8 text-center">
             <h2 className="text-2xl font-black text-white">Search the GTA VI newsroom</h2>
             <p className="mt-3 leading-7 text-zinc-400">
-              Search story headlines, summaries, categories, tags, verification statuses, and Quick Hit titles from one place.
+              Search story headlines, summaries, categories, tags, and verification statuses from one place.
             </p>
           </div>
         )}

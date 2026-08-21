@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PolicyPage } from "@/components/policy-page";
+import { siteConfig } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Contact",
@@ -19,16 +20,22 @@ export default function ContactPage() {
       eyebrow="Contact the newsroom"
       title="Contact"
       introduction={
-        <p>
-          A public newsroom contact channel will be published here before launch. This staging page does not collect messages, email addresses, files, or tips.
-        </p>
+        siteConfig.contactEmail ? (
+          <p>
+            Email the newsroom at <a href={`mailto:${siteConfig.contactEmail}`}>{siteConfig.contactEmail}</a>. Do not include passwords, private account access, or unlawfully obtained material.
+          </p>
+        ) : (
+          <p>
+            A public newsroom contact channel will be published here before launch. This staging page does not collect messages, email addresses, files, or tips.
+          </p>
+        )
       }
       sections={[
         {
           title: "Corrections",
           content: (
             <p>
-              Our correction standards are available now. Review the <Link href="/corrections">corrections policy</Link> for what to include when the public contact channel opens.
+              Our correction standards are available now. Review the <Link href="/corrections">corrections policy</Link> for what to include{siteConfig.contactEmail ? " in a request" : " when the public contact channel opens"}.
             </p>
           ),
         },
