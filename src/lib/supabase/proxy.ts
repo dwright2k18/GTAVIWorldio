@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { VERIFIED_EDITOR_HEADER } from "@/lib/auth/constants";
 
-import { getSupabasePublicConfig } from "./config";
+import { getSupabasePublicConfig, hasSupabasePublicConfig } from "./config";
 
 export async function refreshSupabaseSession(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
@@ -13,6 +13,12 @@ export async function refreshSupabaseSession(request: NextRequest) {
     value: string;
     options?: Parameters<NextResponse["cookies"]["set"]>[2];
   }> = [];
+  if (!hasSupabasePublicConfig()) {
+    return {
+      response: NextResponse.next({ request: { headers: requestHeaders } }),
+      userId: null,
+    };
+  }
   const { url, publishableKey } = getSupabasePublicConfig();
 
   const supabase = createServerClient(url, publishableKey, {

@@ -2,7 +2,7 @@ import "server-only";
 
 import { and, asc, desc, eq, inArray, lte } from "drizzle-orm";
 
-import { db, sqlClient } from "@/db";
+import { db, isDatabaseConfigured, sqlClient } from "@/db";
 import {
   authors,
   categories,
@@ -33,6 +33,7 @@ function liveStoryWhere() {
 }
 
 export async function getPublishedStoryBySlug(slug: string) {
+  if (!isDatabaseConfigured()) return null;
   const [record] = await db
     .select({
       story: stories,
@@ -90,6 +91,7 @@ export async function getPublishedStoryBySlug(slug: string) {
 }
 
 export async function getEditorialRedirect(path: string) {
+  if (!isDatabaseConfigured()) return null;
   const [record] = await db
     .select({ newPath: redirects.newPath, statusCode: redirects.statusCode })
     .from(redirects)
@@ -111,6 +113,7 @@ export type CmsSearchResult = {
 };
 
 export async function searchPublishedCms(query: string) {
+  if (!isDatabaseConfigured()) return [];
   const normalized = query.replace(/\s+/g, " ").trim().slice(0, 160);
   if (normalized.length < 2) return [];
 
@@ -151,6 +154,7 @@ export async function searchPublishedCms(query: string) {
 }
 
 export async function listPublishedArchive(page = 1, pageSize = 20) {
+  if (!isDatabaseConfigured()) return [];
   const safePage = Math.max(1, Math.floor(page));
   const safeSize = Math.min(50, Math.max(1, Math.floor(pageSize)));
   return db
@@ -175,6 +179,7 @@ export async function listPublishedArchive(page = 1, pageSize = 20) {
 }
 
 export async function listSitemapRecords() {
+  if (!isDatabaseConfigured()) return { stories: [], evergreen: [], authors: [] };
   const storyRows = await db.select({ path: stories.urlPath, updatedAt: stories.meaningfullyUpdatedAt, publishedAt: stories.publishedAt, robotsOverride: stories.robotsOverride }).from(stories).where(liveStoryWhere());
   const evergreenRows = await db.select({ path: evergreenPages.path, updatedAt: evergreenPages.meaningfullyUpdatedAt, publishedAt: evergreenPages.publishedAt, robotsOverride: evergreenPages.robotsOverride }).from(evergreenPages).where(eq(evergreenPages.status, "PUBLISHED"));
   const authorRows = await db.select({ slug: authors.slug, updatedAt: authors.updatedAt }).from(authors).innerJoin(stories, eq(stories.authorId, authors.id)).where(liveStoryWhere()).groupBy(authors.id);
@@ -182,6 +187,7 @@ export async function listSitemapRecords() {
 }
 
 export async function getPublicAuthor(slug: string) {
+  if (!isDatabaseConfigured()) return null;
   const [author] = await db.select().from(authors).where(and(eq(authors.slug, slug.toLowerCase()), eq(authors.isActive, true))).limit(1);
   if (!author) return null;
   const history = await db
@@ -193,6 +199,7 @@ export async function getPublicAuthor(slug: string) {
 }
 
 export async function getPublishedEvergreenByPath(path: string) {
+  if (!isDatabaseConfigured()) return null;
   const [page] = await db
     .select({ page: evergreenPages, author: authors })
     .from(evergreenPages)

@@ -8,6 +8,7 @@ import { signOut } from "../actions";
 const adminNavigation = [
   ["Dashboard", "/admin"],
   ["Stories", "/admin/stories"],
+  ["Discovery", "/admin/discovery"],
   ["Evergreen", "/admin/evergreen"],
   ["Sources", "/admin/sources"],
   ["Taxonomy", "/admin/taxonomy"],
@@ -15,6 +16,7 @@ const adminNavigation = [
   ["Media", "/admin/media"],
   ["Videos", "/admin/videos"],
   ["SEO health", "/admin/seo"],
+  ["SEO opportunities", "/admin/seo/opportunities"],
 ] as const;
 
 export const dynamic = "force-dynamic";
