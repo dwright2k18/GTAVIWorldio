@@ -25,6 +25,12 @@ type PolicyCase = {
 
 class PolicyTestRollback extends Error {}
 
+class PolicyCaseRollback extends Error {
+  constructor(readonly allowed: boolean) {
+    super("Rollback isolated policy-test case.");
+  }
+}
+
 async function setApiIdentity(sql: TransactionSql, apiRole: ApiRole, userId?: string) {
   await sql`
     select
@@ -43,15 +49,19 @@ async function runPolicyCase(sql: TransactionSql, testCase: PolicyCase) {
   let denialReason = "row hidden or changed by policy";
 
   try {
-    allowed = await sql.savepoint(async (testSql) => {
+    await sql.savepoint(async (testSql) => {
       await setApiIdentity(testSql, testCase.apiRole ?? "authenticated", testCase.userId);
       const changedOrVisible = await testCase.action(testSql);
       await testSql.unsafe("reset role");
-      return changedOrVisible;
+      throw new PolicyCaseRollback(changedOrVisible);
     });
   } catch (error) {
-    allowed = false;
-    denialReason = error instanceof Error ? error.message : "database rejected the operation";
+    if (error instanceof PolicyCaseRollback) {
+      allowed = error.allowed;
+    } else {
+      allowed = false;
+      denialReason = error instanceof Error ? error.message : "database rejected the operation";
+    }
   }
 
   const actual = allowed ? "ALLOW" : "DENY";
@@ -681,8 +691,8 @@ async function main() {
                 ${monitoredSourceId},
                 ${`https://discovery.example.invalid/${runToken}/author`},
                 'Author supporting evidence',
-                'TIER_3',
-                30,
+                'TIER_2',
+                80,
                 ${profiles.author}
               )
               returning id
