@@ -126,7 +126,7 @@ export default async function StoryPage({
     dateModified: story.dateUpdated,
     mainEntityOfPage: articleUrl,
     url: articleUrl,
-    image: absoluteUrl("/opengraph-image"),
+    image: absoluteUrl("/api/og"),
     articleSection: story.category,
     keywords: story.tags.join(", "),
     isAccessibleForFree: true,

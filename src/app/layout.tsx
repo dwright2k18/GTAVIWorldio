@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Footer } from "@/components/footer";
 import { Header } from "@/components/header";
-import { siteConfig } from "@/lib/site";
+import { absoluteUrl, siteConfig } from "@/lib/site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -43,11 +43,20 @@ export const metadata: Metadata = {
     title: "GTA VI World — Verified News, Analysis & Quick Hits",
     description: siteConfig.description,
     locale: "en_US",
+    images: [
+      {
+        url: absoluteUrl("/api/og"),
+        width: 1200,
+        height: 630,
+        alt: "GTA VI World — verified news, analysis, and community intelligence",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "GTA VI World — Verified News, Analysis & Quick Hits",
     description: siteConfig.description,
+    images: [absoluteUrl("/api/og")],
   },
   robots: {
     index: siteConfig.isIndexable,
