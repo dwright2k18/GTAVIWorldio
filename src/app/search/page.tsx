@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   title: "Search",
   description: "Search GTA VI World stories, analysis, characters, locations, and Quick Hits.",
   alternates: { canonical: "/search" },
-  robots: { index: false, follow: true },
+  robots: { index: false, follow: false },
 };
 
 function firstValue(value: string | string[] | undefined) {
