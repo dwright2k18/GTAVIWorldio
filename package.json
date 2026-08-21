@@ -14,7 +14,8 @@
     "db:seed": "tsx scripts/seed-phase-3.ts",
     "db:check": "tsx scripts/check-database.ts",
     "db:policy-test": "tsx scripts/check-rls.ts",
-    "discovery:test": "tsx scripts/test-discovery-connectors.ts"
+    "discovery:test": "tsx scripts/test-discovery-connectors.ts",
+    "discovery:official-test": "node --env-file=.env.development.local --conditions=react-server --import tsx scripts/test-official-source-connectors.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
@@ -24,6 +25,7 @@
     "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "server-only": "0.0.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -1,4 +1,5 @@
 import { canonicalizeSourceUrl, decodeHtmlEntities, normalizeMeaningfulText, sha256 } from "../normalize";
+import { discoveryUrlMatchesDomain } from "../safety";
 import type { ConnectorItem, ConnectorResult, DiscoverySource } from "../types";
 import { fetchSourceText, passesConfiguredIncludeTerms, type DiscoveryFetcher, type SourceConnector } from "./base";
 
@@ -34,13 +35,16 @@ export function parseFeedItems(
     const rawUrl = linkFromBlock(block);
     if (!title || !rawUrl) continue;
     const canonicalUrl = canonicalizeSourceUrl(rawUrl, finalUrl);
-    const summary = firstTag(block, ["description", "summary", "content:encoded", "content"]);
+    if (!discoveryUrlMatchesDomain(canonicalUrl, source.domain)) continue;
+    const summary = firstTag(block, ["media:description", "description", "summary", "content:encoded", "content"]);
     if (!passesConfiguredIncludeTerms(source, title, summary)) continue;
     const author = firstTag(block, ["dc:creator", "author", "name"]);
     const publishedValue = firstTag(block, ["pubDate", "published", "updated", "dc:date"]);
     const publishedDate = publishedValue ? new Date(publishedValue) : undefined;
     const publishedAt = publishedDate && !Number.isNaN(publishedDate.valueOf()) ? publishedDate : undefined;
-    const contentHash = sha256(`${title}\n${summary ?? ""}`);
+    const thumbnail = block.match(/<media:thumbnail\b[^>]*url=["']([^"']+)["'][^>]*>/i)?.[1];
+    const videoId = firstTag(block, ["yt:videoId"]);
+    const contentHash = sha256(`${title}\n${summary ?? ""}\n${publishedAt?.toISOString() ?? ""}\n${videoId ?? ""}`);
     items.push({
       title,
       url: canonicalUrl,
@@ -52,7 +56,12 @@ export function parseFeedItems(
       contentHash,
       changeType: "NEW_ARTICLE",
       directEvidence: source.isFirstParty,
-      metadata: { connector: source.connectorKind },
+      metadata: {
+        connector: source.connectorKind,
+        extractionMethod: source.domain === "youtube.com" ? "OFFICIAL_VIDEO_FEED" : "STRUCTURED_FEED",
+        thumbnail: thumbnail ? decodeHtmlEntities(thumbnail) : null,
+        videoId: videoId ?? null,
+      },
     });
   }
   return items;
@@ -64,6 +73,9 @@ export class FeedConnector implements SourceConnector {
     const maximumItems = typeof source.connectorConfig.maxItems === "number"
       ? Math.max(1, Math.min(50, Math.floor(source.connectorConfig.maxItems)))
       : 25;
+    const items = parseFeedItems(response.text, source, response.finalUrl, maximumItems);
+    const requireItems = source.connectorConfig.requireItems === true;
+    const extractionSucceeded = items.length > 0 || !requireItems;
     return {
       sourceUrl: response.finalUrl,
       fetchedAt: new Date(),
@@ -71,8 +83,12 @@ export class FeedConnector implements SourceConnector {
       responseBytes: response.responseBytes,
       responseHash: response.responseHash,
       requestCount: response.requestCount,
-      items: parseFeedItems(response.text, source, response.finalUrl, maximumItems),
-      warnings: [],
+      items,
+      extractionMethod: source.domain === "youtube.com" ? "OFFICIAL_VIDEO_FEED" : "STRUCTURED_FEED",
+      extractionSucceeded,
+      health: extractionSucceeded ? "HEALTHY" : "FAILED",
+      lastContentHash: response.responseHash,
+      warnings: extractionSucceeded ? [] : ["The public feed was fetched but contained no required relevant items."],
     };
   }
 }
@@ -91,6 +107,7 @@ export function parseJsonFeedItems(
     const rawUrl = typeof raw.url === "string" ? raw.url : typeof raw.external_url === "string" ? raw.external_url : "";
     if (!title || !rawUrl) return [];
     const canonicalUrl = canonicalizeSourceUrl(rawUrl, finalUrl);
+    if (!discoveryUrlMatchesDomain(canonicalUrl, source.domain)) return [];
     const summaryValue = typeof raw.summary === "string" ? raw.summary : typeof raw.content_text === "string" ? raw.content_text : "";
     const summary = normalizeMeaningfulText(summaryValue) || undefined;
     if (!passesConfiguredIncludeTerms(source, title, summary)) return [];
@@ -127,6 +144,10 @@ export class JsonFeedConnector implements SourceConnector {
       responseHash: response.responseHash,
       requestCount: response.requestCount,
       items: parseJsonFeedItems(value, source, response.finalUrl, maximumItems),
+      extractionMethod: "STRUCTURED_FEED",
+      extractionSucceeded: true,
+      health: "HEALTHY",
+      lastContentHash: response.responseHash,
       warnings: [],
     };
   }
