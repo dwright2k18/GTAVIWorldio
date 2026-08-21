@@ -1,6 +1,6 @@
 import type { ConnectorResult, DiscoverySource } from "../types";
 import { sha256 } from "../normalize";
-import { assertSafeDiscoveryUrl } from "../safety";
+import { assertSafeDiscoveryUrl, discoveryUrlMatchesDomain } from "../safety";
 
 export type DiscoveryFetcher = typeof fetch;
 
@@ -15,8 +15,18 @@ const redirectStatuses = new Set([301, 302, 303, 307, 308]);
 export async function fetchSourceText(
   source: DiscoverySource,
   fetcher: DiscoveryFetcher = fetch,
+  options: {
+    url?: string;
+    accept?: "HTML" | "FEED";
+  } = {},
 ) {
-  const url = assertSafeDiscoveryUrl(source.url);
+  const url = assertSafeDiscoveryUrl(options.url ?? source.url);
+  if (!discoveryUrlMatchesDomain(url.toString(), source.domain)) {
+    throw new Error("Configured discovery URL does not match the monitored source domain.");
+  }
+  const accept = options.accept === "HTML"
+    ? "text/html, application/xhtml+xml;q=0.9, application/ld+json;q=0.7, */*;q=0.1"
+    : "application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html;q=0.7, */*;q=0.1";
   let totalRequests = 0;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const controller = new AbortController();
@@ -27,7 +37,7 @@ export async function fetchSourceText(
       for (let redirectCount = 0; redirectCount <= 3; redirectCount += 1) {
         const response = await fetcher(currentUrl, {
           headers: {
-            Accept: "application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html;q=0.9, */*;q=0.1",
+            Accept: accept,
             "User-Agent": "GTAVIWorldio-Discovery/1.0 (+https://gtaviworld.io/about)",
           },
           redirect: "manual",
@@ -40,6 +50,9 @@ export async function fetchSourceText(
           if (!location) throw new Error("Source redirect did not include a destination.");
           if (redirectCount === 3) throw new Error("Source exceeded the discovery redirect limit.");
           currentUrl = assertSafeDiscoveryUrl(new URL(location, currentUrl).toString());
+          if (!discoveryUrlMatchesDomain(currentUrl.toString(), source.domain)) {
+            throw new Error("Source redirect left the monitored source domain.");
+          }
           continue;
         }
         if (attempt === 0 && retryableStatuses.has(response.status)) {

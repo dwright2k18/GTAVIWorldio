@@ -30,11 +30,27 @@ async function main() {
       monitored_sources: number;
       active_monitored_sources: number;
       discovery_candidates: number;
+      legitimate_candidate_present: boolean;
       test_candidates: number;
       discovery_settings: number;
       recurring_monitoring_enabled: boolean;
       automatic_drafting_enabled: boolean;
       deep_research_enabled: boolean;
+      candidate_evidence_count: number;
+      source_health: Array<{
+        id: string;
+        name: string;
+        active: boolean;
+        health: string;
+        method: string | null;
+        last_successful_fetch_at: string | null;
+        last_successful_extraction_at: string | null;
+        last_discovered_item_at: string | null;
+        last_http_status: number | null;
+        consecutive_failures: number;
+        last_content_hash: string | null;
+        last_error: string | null;
+      }>;
     }>
     >`
     select
@@ -51,14 +67,34 @@ async function main() {
       (select count(*)::int from public.monitored_sources) as monitored_sources,
       (select count(*)::int from public.monitored_sources where is_active = true) as active_monitored_sources,
       (select count(*)::int from public.discovery_candidates) as discovery_candidates,
+      (select exists(select 1 from public.discovery_candidates where id = '70db3fc3-0671-4824-80b4-6682ac6d7b76' and is_test = false and story_id is null)) as legitimate_candidate_present,
       (select count(*)::int from public.discovery_candidates where is_test = true) as test_candidates,
       (select count(*)::int from public.discovery_settings) as discovery_settings,
       (select coalesce(bool_or(recurring_monitoring_enabled), false) from public.discovery_settings) as recurring_monitoring_enabled,
       (select coalesce(bool_or(automatic_drafting_enabled), false) from public.discovery_settings) as automatic_drafting_enabled,
       (select coalesce(bool_or(deep_research_enabled), false) from public.discovery_settings) as deep_research_enabled
+      ,(select count(*)::int from public.candidate_evidence where candidate_id = '70db3fc3-0671-4824-80b4-6682ac6d7b76') as candidate_evidence_count
+      ,(select coalesce(json_agg(json_build_object(
+        'id', id,
+        'name', name,
+        'active', is_active,
+        'health', health_status,
+        'method', last_extraction_method,
+        'last_successful_fetch_at', last_successful_fetch_at,
+        'last_successful_extraction_at', last_successful_extraction_at,
+        'last_discovered_item_at', last_discovered_item_at,
+        'last_http_status', last_http_status,
+        'consecutive_failures', consecutive_failures,
+        'last_content_hash', last_content_hash,
+        'last_error', last_error
+      ) order by id), '[]'::json) from public.monitored_sources where id in (
+        '41000000-0000-4000-8000-000000000001',
+        '41000000-0000-4000-8000-000000000004',
+        '41000000-0000-4000-8000-000000000009'
+      )) as source_health
     `;
 
-    const migrationSql = await readFile("drizzle/0004_phase_4_discovery.sql");
+    const migrationSql = await readFile("drizzle/0005_phase_4_1_source_hardening.sql");
     const migrationHash = createHash("sha256").update(migrationSql).digest("hex");
     const [migrationState] = await client<Array<{ total: number; latest_hash: string }>>`
       select count(*)::int as total, (array_agg(hash order by created_at desc))[1] as latest_hash
@@ -80,18 +116,19 @@ async function main() {
       counts.anonymous_table_grants !== 0 ||
       counts.profile_mutation_grants !== 0 ||
       counts.policy_test_users !== 0 ||
-      counts.monitored_sources !== 8 ||
+      counts.monitored_sources !== 9 ||
       counts.active_monitored_sources !== 0 ||
-      counts.discovery_candidates !== 0 ||
+      counts.discovery_candidates !== 1 ||
+      !counts.legitimate_candidate_present ||
       counts.test_candidates !== 0 ||
       counts.discovery_settings !== 1 ||
       counts.recurring_monitoring_enabled ||
       counts.automatic_drafting_enabled ||
       counts.deep_research_enabled ||
-      migrationState.total !== 5 ||
+      migrationState.total !== 6 ||
       migrationState.latest_hash !== migrationHash
     ) {
-      throw new Error("Database safety checks did not match the expected Phase 4 test-mode state.");
+      throw new Error("Database safety checks did not match the expected Phase 4.1 test-mode state.");
     }
   } finally {
     await client.end();
