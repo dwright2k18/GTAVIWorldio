@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ShareIcon } from "@/components/icons";
+import { trackEvent } from "@/lib/analytics";
 
 export function ShareButton({
   title,
@@ -20,9 +21,11 @@ export function ShareButton({
     try {
       if (navigator.share) {
         await navigator.share({ title, url });
+        trackEvent("share_action", { method: "native", path });
         setStatus("Shared");
       } else {
         await navigator.clipboard.writeText(url);
+        trackEvent("share_action", { method: "clipboard", path });
         setStatus("Copied");
       }
     } catch (error) {

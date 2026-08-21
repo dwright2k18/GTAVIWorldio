@@ -10,6 +10,12 @@ export const metadata: Metadata = {
   description:
     "Browse the latest GTA VI news, analysis, character guides, and rumor coverage with visible verification labels.",
   alternates: { canonical: "/latest" },
+  openGraph: {
+    title: "Latest GTA VI News",
+    description:
+      "Browse GTA VI news, analysis, character guides, and rumor coverage with visible verification labels.",
+    url: "/latest",
+  },
 };
 
 type LatestSearchParams = Promise<{

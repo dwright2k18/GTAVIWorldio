@@ -8,6 +8,12 @@ export const metadata: Metadata = {
   description:
     "Browse the GTA VI World 13-second vertical video interface with visible source and verification labels.",
   alternates: { canonical: "/quick-hits" },
+  openGraph: {
+    title: "GTA VI Quick Hits",
+    description:
+      "Browse the 13-second vertical GTA VI interface with visible source and verification labels.",
+    url: "/quick-hits",
+  },
 };
 
 export default function QuickHitsPage() {

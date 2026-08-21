@@ -2,12 +2,14 @@
 
 import { useState, type FormEvent } from "react";
 import { ArrowRightIcon } from "@/components/icons";
+import { trackEvent } from "@/lib/analytics";
 
 export function NewsletterSignup() {
   const [notice, setNotice] = useState("");
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    trackEvent("newsletter_signup_intent", { providerConnected: false });
     event.currentTarget.reset();
     setNotice(
       "The GTA VI Brief is opening soon. Your email was not stored, and no message will be sent yet.",
@@ -57,7 +59,7 @@ export function NewsletterSignup() {
             </button>
           </form>
           <p className="mt-3 px-2 text-xs leading-5 text-zinc-500">
-            No spam. Major GTA VI updates only. Unsubscribe anytime once delivery begins.
+            Signup is not open yet. No address entered here is stored or sent; a privacy-reviewed provider will be connected before collection begins.
           </p>
           {notice && (
             <p className="mt-3 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.07] px-4 py-3 text-xs leading-5 text-cyan-100/80" role="status">

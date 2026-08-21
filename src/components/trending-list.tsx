@@ -19,7 +19,7 @@ export function TrendingList({ stories }: { stories: Story[] }) {
             </div>
             <Link
               href={`/stories/${story.slug}`}
-              className="text-base font-bold leading-6 text-zinc-100 hover:text-pink-200"
+              className="inline-flex min-h-11 items-center text-base font-bold leading-6 text-zinc-100 hover:text-pink-200"
             >
               {story.headline}
             </Link>

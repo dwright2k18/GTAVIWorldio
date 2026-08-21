@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { AnalyticsEvent } from "@/components/analytics-event";
 import { SearchIcon } from "@/components/icons";
 import { QuickHitCard } from "@/components/quick-hit-card";
 import { StoryCard } from "@/components/story-card";
@@ -29,6 +30,12 @@ export default async function SearchPage({
 
   return (
     <div className="min-h-screen py-10 sm:py-14">
+      {query && (
+        <AnalyticsEvent
+          name="search_use"
+          data={{ query, resultCount }}
+        />
+      )}
       <div className="site-shell">
         <Breadcrumbs items={[{ label: "Home", href: "/" }, { label: "Search" }]} />
         <div className="mx-auto mt-9 max-w-3xl text-center">

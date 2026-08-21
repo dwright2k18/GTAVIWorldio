@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { AnalyticsEvent } from "@/components/analytics-event";
+import { AnalyticsLink } from "@/components/analytics-link";
 import { ArrowRightIcon, ClockIcon } from "@/components/icons";
 import { QuickHitCard } from "@/components/quick-hit-card";
 import { ShareButton } from "@/components/share-button";
@@ -154,6 +156,10 @@ export default async function StoryPage({
 
   return (
     <article className="min-h-screen pb-18 pt-8 sm:pt-10">
+      <AnalyticsEvent
+        name="article_view"
+        data={{ storyId: story.storyId, slug: story.slug }}
+      />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
@@ -303,12 +309,14 @@ export default async function StoryPage({
                       </span>
                       <div>
                         <VerificationBadge status={item.verification} compact />
-                        <Link
+                        <AnalyticsLink
                           href={`/stories/${item.slug}`}
+                          eventName="related_story_click"
+                          eventData={{ sourceStoryId: story.storyId, storyId: item.storyId, group: group.title }}
                           className="mt-2 block text-sm font-bold leading-5 text-zinc-200 hover:text-pink-200 sm:text-base sm:leading-6"
                         >
                           {item.headline}
-                        </Link>
+                        </AnalyticsLink>
                       </div>
                     </li>
                   ))}

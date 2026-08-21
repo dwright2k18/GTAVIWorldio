@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { PlayIcon } from "@/components/icons";
+import { AnalyticsLink } from "@/components/analytics-link";
+import { QuickHitVideo } from "@/components/quick-hit-video";
 import { ShareButton } from "@/components/share-button";
 import { StoryArtwork } from "@/components/story-artwork";
 import { VerificationBadge } from "@/components/verification-badge";
@@ -15,19 +17,7 @@ export function QuickHitCard({ video }: { video: QuickHit }) {
     <article id={video.videoId} className="group min-w-0">
       <div className="relative isolate aspect-[9/16] overflow-hidden rounded-[1.7rem] border border-white/15 bg-white/[0.035] shadow-xl shadow-black/20 transition-transform duration-300 group-hover:-translate-y-1 group-hover:border-pink-300/30">
         {video.video ? (
-          <video
-            className="absolute inset-0 h-full w-full object-cover"
-            controls
-            playsInline
-            preload="metadata"
-            poster={video.video.poster}
-            aria-label={video.headline}
-          >
-            <source src={video.video.src} type={video.video.mimeType ?? "video/mp4"} />
-            {video.video.captions && (
-              <track kind="captions" src={video.video.captions} srcLang="en" label="English" default />
-            )}
-          </video>
+          <QuickHitVideo video={video.video} videoId={video.videoId} headline={video.headline} />
         ) : (
           <StoryArtwork
             media={video.media}
@@ -38,15 +28,17 @@ export function QuickHitCard({ video }: { video: QuickHit }) {
         )}
 
         {!video.video && (
-          <Link
+          <AnalyticsLink
             href={storyPath}
+            eventName="quick_hit_play"
+            eventData={{ videoId: video.videoId, mediaConnected: false }}
             className="absolute inset-0 z-10 grid place-items-center bg-black/5"
             aria-label={`Open story for ${video.headline}`}
           >
             <span className="grid h-16 w-16 place-items-center rounded-full border border-white/45 bg-black/40 text-white shadow-[0_0_40px_rgba(244,114,182,0.3)] backdrop-blur-md transition-transform group-hover:scale-105">
               <PlayIcon className="ml-1 h-7 w-7" />
             </span>
-          </Link>
+          </AnalyticsLink>
         )}
 
         <div className="pointer-events-none absolute inset-x-4 top-4 z-20 flex items-center justify-between gap-3">

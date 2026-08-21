@@ -19,7 +19,7 @@ export function StoryCard({ story }: { story: Story }) {
           </span>
         </div>
         <h3 className="mt-4 text-balance text-xl font-bold tracking-[-0.025em] text-white sm:text-2xl">
-          <Link href={`/stories/${story.slug}`} className="hover:text-pink-200">
+          <Link href={`/stories/${story.slug}`} className="inline-flex min-h-11 items-center hover:text-pink-200">
             {story.headline}
           </Link>
         </h3>

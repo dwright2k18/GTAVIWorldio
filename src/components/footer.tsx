@@ -5,14 +5,14 @@ import { Logo } from "@/components/logo";
 export function Footer() {
   return (
     <footer className="border-t border-white/10 bg-[#07060d]">
-      <div className="site-shell grid gap-10 py-12 sm:grid-cols-2 lg:grid-cols-[1.4fr_.75fr_.85fr_.85fr] lg:py-16">
+      <div className="site-shell grid gap-10 py-12 sm:grid-cols-2 lg:grid-cols-[1.35fr_.72fr_.82fr_.82fr_.82fr] lg:py-16">
         <div>
           <Logo />
           <p className="mt-5 max-w-md text-sm leading-6 text-zinc-400">
             Independent GTA VI reporting with visible sourcing and verification labels. Built for readers who want the excitement without losing the evidence.
           </p>
           <p className="mt-5 max-w-md text-xs leading-5 text-zinc-600">
-            GTA VI World is an independent fan publication and is not owned, operated, sponsored, or endorsed by Rockstar Games or Take-Two Interactive.
+            GTA VI World is an independent fan publication and is not owned, operated, sponsored, endorsed, or affiliated with Rockstar Games or Take-Two Interactive. Grand Theft Auto, GTA, GTA VI, Rockstar Games, Take-Two Interactive, and related names and marks belong to their respective owners.
           </p>
         </div>
         {Object.entries(footerNavigation).map(([section, links]) => (

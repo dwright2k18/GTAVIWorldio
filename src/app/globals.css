@@ -168,6 +168,22 @@ a {
   padding: 1.5rem;
 }
 
+.policy-copy a {
+  color: #a5f3fc;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: rgba(103, 232, 249, 0.35);
+  text-underline-offset: 0.22rem;
+}
+
+.policy-copy a:hover {
+  color: white;
+}
+
+.policy-copy strong {
+  color: #f4f4f5;
+}
+
 @media (min-width: 640px) {
   .site-shell {
     width: min(100% - 3rem, 78rem);

@@ -29,7 +29,13 @@ export const footerNavigation = {
   ],
   Standards: [
     { label: "Verification", href: "/verification" },
-    { label: "The GTA VI Brief", href: "/#newsletter" },
-    { label: "Search", href: "/search" },
+    { label: "Editorial policy", href: "/editorial-policy" },
+    { label: "Corrections", href: "/corrections" },
+  ],
+  Publication: [
+    { label: "About", href: "/about" },
+    { label: "Contact", href: "/contact" },
+    { label: "Privacy", href: "/privacy" },
+    { label: "Terms", href: "/terms" },
   ],
 } as const;
