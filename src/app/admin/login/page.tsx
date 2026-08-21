@@ -1,4 +1,6 @@
 import { Logo } from "@/components/logo";
+import { getCurrentEditorAccess } from "@/lib/auth/dal";
+import { redirect } from "next/navigation";
 
 import { signIn } from "./actions";
 
@@ -10,6 +12,15 @@ type LoginPageProps = {
 
 export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
+  const access = await getCurrentEditorAccess();
+
+  if (access.status === "ACTIVE") {
+    redirect(params.next?.startsWith("/admin") ? params.next : "/admin");
+  }
+
+  if (access.status === "INACTIVE") {
+    redirect("/admin/access-denied");
+  }
 
   return (
     <main className="min-h-screen bg-[#070b16] px-5 py-12 text-white">

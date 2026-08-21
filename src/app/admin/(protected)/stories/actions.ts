@@ -17,6 +17,7 @@ import {
   storyVideos,
 } from "@/db/schema";
 import { requireEditorAction, type EditorRole } from "@/lib/auth/dal";
+import { storyMutationDenial } from "@/lib/auth/permissions";
 import { textToArticleBlocks } from "@/lib/cms/content";
 import { parseUtcDateTime, parseZonedDateTime } from "@/lib/cms/datetime";
 import { defaultStoryPath, slugifyHeadline } from "@/lib/cms/seo";
@@ -56,6 +57,9 @@ async function persistStory(input: StoryInput, storyId?: string) {
     : undefined;
 
   if (storyId && !existing) throw new Error("Story not found.");
+
+  const roleDenial = storyMutationDenial(editor.role, editor.id, input.intent, existing);
+  if (roleDenial) throw new Error(roleDenial);
 
   if (["approve", "schedule", "publish", "archive"].includes(input.intent)) {
     if (!seniorRoles.includes(editor.role)) throw new Error("An editor role is required for this workflow action.");

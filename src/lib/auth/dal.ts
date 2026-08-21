@@ -11,11 +11,16 @@ import { VERIFIED_EDITOR_HEADER } from "@/lib/auth/constants";
 
 export type EditorRole = EditorProfile["role"];
 
-export const getCurrentEditor = cache(async () => {
+export type EditorAccess =
+  | { status: "UNAUTHENTICATED"; editor: null }
+  | { status: "INACTIVE"; editor: null }
+  | { status: "ACTIVE"; editor: EditorProfile };
+
+export const getCurrentEditorAccess = cache(async (): Promise<EditorAccess> => {
   const userId = (await headers()).get(VERIFIED_EDITOR_HEADER);
 
   if (!userId) {
-    return null;
+    return { status: "UNAUTHENTICATED", editor: null };
   }
 
   const [editor] = await db
@@ -24,15 +29,30 @@ export const getCurrentEditor = cache(async () => {
     .where(eq(editorProfiles.authUserId, userId))
     .limit(1);
 
-  return editor?.isActive ? editor : null;
+  if (!editor?.isActive) {
+    return { status: "INACTIVE", editor: null };
+  }
+
+  return { status: "ACTIVE", editor };
+});
+
+export const getCurrentEditor = cache(async () => {
+  const access = await getCurrentEditorAccess();
+  return access.status === "ACTIVE" ? access.editor : null;
 });
 
 export async function requireEditor(roles?: readonly EditorRole[]) {
-  const editor = await getCurrentEditor();
+  const access = await getCurrentEditorAccess();
 
-  if (!editor) {
+  if (access.status === "UNAUTHENTICATED") {
     redirect("/admin/login");
   }
+
+  if (access.status === "INACTIVE") {
+    redirect("/admin/access-denied");
+  }
+
+  const editor = access.editor;
 
   if (roles && !roles.includes(editor.role)) {
     redirect("/admin?notice=insufficient-role");
@@ -42,11 +62,13 @@ export async function requireEditor(roles?: readonly EditorRole[]) {
 }
 
 export async function requireEditorAction(roles?: readonly EditorRole[]) {
-  const editor = await getCurrentEditor();
+  const access = await getCurrentEditorAccess();
 
-  if (!editor) {
+  if (access.status !== "ACTIVE") {
     throw new Error("Authentication required.");
   }
+
+  const editor = access.editor;
 
   if (roles && !roles.includes(editor.role)) {
     throw new Error("Your newsroom role does not allow this action.");

@@ -12,7 +12,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed-phase-3.ts",
-    "db:check": "tsx scripts/check-database.ts"
+    "db:check": "tsx scripts/check-database.ts",
+    "db:policy-test": "tsx scripts/check-rls.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

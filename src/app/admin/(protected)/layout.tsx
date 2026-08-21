@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Logo } from "@/components/logo";
 import { requireEditor } from "@/lib/auth/dal";
 
-import { signOut } from "./actions";
+import { signOut } from "../actions";
 
 const adminNavigation = [
   ["Dashboard", "/admin"],

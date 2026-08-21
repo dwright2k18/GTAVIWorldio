@@ -15,10 +15,6 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (userId && isLogin) {
-    return NextResponse.redirect(new URL("/admin", request.url));
-  }
-
   return response;
 }
 
