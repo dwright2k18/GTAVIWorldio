@@ -1,7 +1,11 @@
 import { config } from "dotenv";
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
+
+import {
+  migrationHashesMatch,
+  normalizedMigrationHash,
+} from "./lib/migration-integrity";
 
 config({ path: ".env.development.local", quiet: true });
 
@@ -116,17 +120,26 @@ async function main() {
       )) as source_health
     `;
 
-    const migrationSql = await readFile("drizzle/0007_phase_4_3_scheduler_hardening.sql");
-    const migrationHash = createHash("sha256").update(migrationSql).digest("hex");
-    const [migrationState] = await client<Array<{ total: number; latest_hash: string }>>`
-      select count(*)::int as total, (array_agg(hash order by created_at desc))[1] as latest_hash
-      from drizzle.__drizzle_migrations
+    const journal = JSON.parse(
+      await readFile("drizzle/meta/_journal.json", "utf8"),
+    ) as { entries: Array<{ tag: string }> };
+    const expectedMigrations = await Promise.all(
+      journal.entries.map(async ({ tag }) => ({
+        tag,
+        hash: normalizedMigrationHash(await readFile(`drizzle/${tag}.sql`, "utf8")),
+      })),
+    );
+    const migrationLedger = await client<Array<{ id: number; hash: string }>>`
+      select id, hash from drizzle.__drizzle_migrations order by id
     `;
+    const hashesMatch = migrationHashesMatch(expectedMigrations, migrationLedger);
+    const latestMigration = expectedMigrations.at(-1)?.tag ?? null;
 
     console.log(JSON.stringify({
       ...counts,
-      migrations: migrationState.total,
-      latest_migration_matches: migrationState.latest_hash === migrationHash,
+      migrations: migrationLedger.length,
+      latest_migration: latestMigration,
+      migration_hashes_match: hashesMatch,
     }, null, 2));
 
     if (
@@ -159,8 +172,9 @@ async function main() {
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000003")?.min_check_interval_minutes !== 360 ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000004")?.min_check_interval_minutes !== 360 ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000009")?.min_check_interval_minutes !== 120 ||
-      migrationState.total !== 8 ||
-      migrationState.latest_hash !== migrationHash
+      expectedMigrations.length !== 8 ||
+      migrationLedger.length !== expectedMigrations.length ||
+      !hashesMatch
     ) {
       throw new Error("Database safety checks did not match the expected Phase 4.2 disabled state.");
     }

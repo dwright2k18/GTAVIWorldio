@@ -3,6 +3,7 @@ import "server-only";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 
 import { db } from "@/db";
+import { isDatabaseAvailabilityError } from "@/db/errors";
 import {
   candidateEvidence,
   discoveryAlerts,
@@ -718,6 +719,9 @@ export async function runDiscoverySource(
     };
   } catch (error) {
     if (options.mode === "TEST_ONLY") throw error;
+    // Infrastructure outages are not connector failures. Let the Cron stop
+    // safely without incrementing Rockstar/Take-Two failure counters.
+    if (isDatabaseAvailabilityError(error)) throw error;
     const completedAt = new Date();
     if (error instanceof DailyDiscoveryRequestLimitReached) {
       const requestsReserved = requestBudget?.requestsReserved() ?? 0;
