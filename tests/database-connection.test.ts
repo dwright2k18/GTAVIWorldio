@@ -4,6 +4,7 @@ import {
   configuredDatabaseUrl,
   databaseUrl,
   PREVIEW_DISABLED_DATABASE_URL,
+  runtimeDatabaseCandidates,
 } from "@/db/connection-url";
 
 describe("database connection selection", () => {
@@ -37,5 +38,31 @@ describe("database connection selection", () => {
         POSTGRES_URL_NON_POOLING: "postgres://direct.example/db",
       }),
     ).toBe("postgres://direct.example/db");
+  });
+
+  it("orders the transaction pooler before the distinct approved fallback", () => {
+    expect(
+      runtimeDatabaseCandidates({
+        POSTGRES_URL: "postgres://transaction.example/db",
+        POSTGRES_URL_NON_POOLING: "postgres://session.example/db",
+      }),
+    ).toEqual([
+      { kind: "transaction_pooler", url: "postgres://transaction.example/db" },
+      {
+        kind: "session_or_direct_fallback",
+        url: "postgres://session.example/db",
+      },
+    ]);
+  });
+
+  it("does not retry the same endpoint under two names", () => {
+    expect(
+      runtimeDatabaseCandidates({
+        POSTGRES_URL: "postgres://same.example/db",
+        POSTGRES_URL_NON_POOLING: "postgres://same.example/db",
+      }),
+    ).toEqual([
+      { kind: "transaction_pooler", url: "postgres://same.example/db" },
+    ]);
   });
 });

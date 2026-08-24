@@ -76,6 +76,20 @@ execution, and prevents overlapping discovery cycles with an expiring database
 lock. No drafting, publishing, paid AI, analytics, or public indexing is enabled
 by the scheduler configuration.
 
+Build/prerender keeps the established pooled connection and deterministic public
+fallback. The discovery Cron separately probes Supabase's transaction pooler,
+retries one fresh connection after a recognized transient startup failure, and
+then permits one attempt through the existing server-only session/direct URL.
+The selected database is scoped to that Cron execution, uses one connection,
+disables prepared statements, and closes idle connections quickly. This bounded
+selection happens before any connector or mutation runs; SQL, authorization, and
+programming errors are not retried.
+
+While the newsroom recurring switch is off, an authenticated Cron invocation
+performs only a control read, rollback-safe lock acquire/release, and source
+configuration read. It performs no external source request and creates or
+modifies no candidate or story.
+
 Scheduled publishing is a separate default-off capability. Its endpoint requires
 both valid cron authentication and `SCHEDULED_PUBLISHING_ENABLED=true`; the
 discovery gate cannot enable publishing, and the publishing gate cannot enable
