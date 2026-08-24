@@ -27,7 +27,7 @@ export default async function DiscoveryDashboardPage() {
         <div>
           <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-300">News intelligence</p>
           <h1 className="mt-2 text-4xl font-black">Story discovery</h1>
-          <p className="mt-3 max-w-3xl text-slate-300">Candidates remain separate from stories until an editor deliberately promotes one. No monitoring or publishing runs automatically.</p>
+          <p className="mt-3 max-w-3xl text-slate-300">Monitoring can create private discovery candidates when explicitly enabled. Publishing always remains a separate editorial action.</p>
         </div>
         <div className="flex flex-wrap gap-3">
           <Link className="min-h-11 rounded-full border border-white/15 px-5 py-2.5 font-bold hover:border-cyan-300" href="/admin/discovery/controls" prefetch={false}>Safety controls</Link>
@@ -49,7 +49,7 @@ export default async function DiscoveryDashboardPage() {
           <p className="text-sm font-bold text-slate-400">{dashboard.officialCoverage.gapAlerts} open coverage-gap alert{dashboard.officialCoverage.gapAlerts === 1 ? "" : "s"}</p>
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {dashboard.officialCoverage.signals.map((signal) => { const metrics = dashboard.officialCoverage.connectorMetrics.find((entry) => entry.label === signal.label); return <article className="rounded-2xl border border-white/10 bg-black/20 p-4" key={signal.label}><p className="text-sm font-black">{signal.label}</p><p className={`mt-2 text-xs font-black uppercase tracking-wider ${signal.health === "HEALTHY" ? "text-emerald-300" : signal.health === "DEGRADED" ? "text-amber-300" : "text-slate-400"}`}>{signal.health.replaceAll("_", " ")}</p><p className="mt-2 text-xs text-slate-500">Last extraction: {signal.lastSuccessfulExtractionAt?.toLocaleString("en-US") ?? "Not checked"}</p><p className="mt-2 text-xs text-slate-500">{metrics?.requests ?? 0} requests · {metrics?.successfulExtractions ?? 0} extractions · {metrics?.failures ?? 0} failures</p></article>; })}
+          {dashboard.officialCoverage.signals.map((signal) => { const metrics = dashboard.officialCoverage.connectorMetrics.find((entry) => entry.label === signal.label); return <article className="rounded-2xl border border-white/10 bg-black/20 p-4" key={signal.label}><p className="text-sm font-black">{signal.label}</p><p className={`mt-2 text-xs font-black uppercase tracking-wider ${signal.health === "HEALTHY" ? "text-emerald-300" : signal.health === "DEGRADED" ? "text-amber-300" : "text-slate-400"}`}>{signal.health.replaceAll("_", " ")}</p><p className="mt-2 text-xs text-slate-500">Last extraction: {signal.lastSuccessfulExtractionAt?.toLocaleString("en-US") ?? "Not checked"}</p><p className="mt-2 text-xs text-slate-500">{metrics?.requests ?? 0} requests · {metrics?.successfulExtractions ?? 0} extractions · {metrics?.failures ?? 0} failures</p><p className="mt-2 text-xs text-slate-500">{metrics?.notModifiedResponses ?? 0} not modified · {metrics?.requestsSaved ?? 0} detail requests saved</p></article>; })}
         </div>
         <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
           <div><dt className="text-slate-500">Requests</dt><dd className="font-black">{dashboard.officialCoverage.metrics.requests}</dd></div>
@@ -58,6 +58,7 @@ export default async function DiscoveryDashboardPage() {
           <div><dt className="text-slate-500">Evidence attached</dt><dd className="font-black">{dashboard.officialCoverage.metrics.evidenceAttached}</dd></div>
           <div><dt className="text-slate-500">Average response</dt><dd className="font-black">{dashboard.officialCoverage.metrics.averageResponseMs} ms</dd></div>
         </dl>
+        <p className="mt-4 text-xs text-slate-500">Average {dashboard.officialCoverage.metrics.averageRequestsPerRun} requests/run · {dashboard.officialCoverage.metrics.conditionalRequests} conditional requests · {dashboard.officialCoverage.metrics.notModifiedResponses} HTTP 304s · {dashboard.officialCoverage.metrics.hashUnchangedExits} unchanged exits · {dashboard.officialCoverage.metrics.detailFetchesAvoided} detail fetches avoided</p>
         <p className="mt-4 text-xs text-slate-500">Last successful discovery: {dashboard.officialCoverage.lastSuccessfulDiscovery?.toLocaleString("en-US") ?? "Not checked"} · Last official event detected: {dashboard.officialCoverage.lastOfficialEvent?.toLocaleString("en-US") ?? "None recorded"}</p>
         <p className="mt-5 text-xs leading-5 text-slate-400">Newswire health is reported independently. A degraded listing cannot be relabeled healthy merely because YouTube or known-page monitoring is working.</p>
       </section>

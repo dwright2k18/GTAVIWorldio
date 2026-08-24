@@ -21,7 +21,7 @@ import {
 } from "@/db/schema";
 
 import { assessDuplicate, clusterEventKey } from "./deduplication";
-import { shouldCreateCandidateForSnapshot } from "./baseline";
+import { excludePreviouslySeenItems, shouldCreateCandidateForSnapshot } from "./baseline";
 import { connectorFor } from "./connectors";
 import type { DiscoveryFetcher } from "./connectors/base";
 import { buildSafeResearchPacket } from "./research";
@@ -92,6 +92,20 @@ export async function runDiscoverySource(
   const [source] = await db.select().from(monitoredSources).where(eq(monitoredSources.id, sourceId)).limit(1);
   if (!source) throw new Error("Monitored source not found.");
   const [settings] = await db.select().from(discoverySettings).limit(1);
+  const priorSnapshotRows = await db
+    .select({
+      normalizedUrl: sourceSnapshots.normalizedUrl,
+      contentHash: sourceSnapshots.contentHash,
+    })
+    .from(sourceSnapshots)
+    .where(eq(sourceSnapshots.sourceId, source.id))
+    .orderBy(desc(sourceSnapshots.checkedAt))
+    .limit(1_000);
+  const priorSnapshotHashes = new Set(priorSnapshotRows.map(({ contentHash }) => contentHash));
+  const discoverySource: DiscoverySource = {
+    ...asDiscoverySource(source),
+    knownUrls: priorSnapshotRows.map(({ normalizedUrl }) => normalizedUrl),
+  };
 
   if (options.mode === "RECURRING") {
     if (!recurringDiscoveryEnabled() || !settings?.recurringMonitoringEnabled) {
@@ -153,13 +167,17 @@ export async function runDiscoverySource(
         candidateLimit: dailyCandidateLimit,
       });
   try {
-    const result = await connectorFor(asDiscoverySource(source)).fetch(
-      asDiscoverySource(source),
+    const result = await connectorFor(discoverySource).fetch(
+      discoverySource,
       requestBudget?.fetcher ?? options.fetcher,
     );
     const candidateLimitPerRun = settings?.maxCandidatesPerRun ?? 5;
-    const scoredCandidates = result.items.slice(0, candidateLimitPerRun).map((item) => {
-      const scored = scoreCandidate(asDiscoverySource(source), item, {
+    const candidateItems = options.mode === "TEST_ONLY"
+      ? result.items
+      : excludePreviouslySeenItems(result.items, priorSnapshotHashes);
+    const unchangedItemsSkipped = result.items.length - candidateItems.length;
+    const scoredCandidates = candidateItems.slice(0, candidateLimitPerRun).map((item) => {
+      const scored = scoreCandidate(discoverySource, item, {
         independentSourceCount: 1,
         evidenceComplete: Boolean(item.summary?.trim()),
         isNovel: true,
@@ -189,7 +207,12 @@ export async function runDiscoverySource(
         successfulResponses: result.successfulResponses ?? (result.httpStatus >= 200 && result.httpStatus < 400 ? 1 : 0),
         errorCode: "EXTRACTION_FAILED",
         errorMessage: message,
-        metadata: { extractionMethod: result.extractionMethod, warnings: result.warnings },
+        metadata: {
+          extractionMethod: result.extractionMethod,
+          warnings: result.warnings,
+          connectorMetrics: result.metrics,
+          unchangedItemsSkipped,
+        },
       });
       await db.update(monitoredSources).set({
         healthStatus: failure.healthStatus,
@@ -278,13 +301,6 @@ export async function runDiscoverySource(
       .where(eq(sourceSnapshots.sourceId, source.id))
       .orderBy(desc(sourceSnapshots.checkedAt))
       .limit(1);
-    const priorSnapshotRows = await db
-      .select({ contentHash: sourceSnapshots.contentHash })
-      .from(sourceSnapshots)
-      .where(eq(sourceSnapshots.sourceId, source.id))
-      .orderBy(desc(sourceSnapshots.checkedAt))
-      .limit(1_000);
-    const priorSnapshotHashes = new Set(priorSnapshotRows.map(({ contentHash }) => contentHash));
     const isInitialBaseline = priorSnapshotHashes.size === 0;
     let created = 0;
     let duplicates = 0;
@@ -673,6 +689,8 @@ export async function runDiscoverySource(
         assessments,
         candidateCreationAllowed: allowCandidateCreation,
         candidateLimitSuppressions,
+        connectorMetrics: result.metrics,
+        unchangedItemsSkipped,
       },
     });
     await db.update(monitoredSources).set({
@@ -683,6 +701,7 @@ export async function runDiscoverySource(
       lastDiscoveredItemAt: result.items.length ? persistedAt : source.lastDiscoveredItemAt,
       lastExtractionMethod: result.extractionMethod,
       lastContentHash: result.lastContentHash ?? result.responseHash,
+      httpCache: { ...source.httpCache, ...result.cacheUpdates },
       lastHttpStatus: result.httpStatus,
       lastError: result.health === "DEGRADED" ? result.warnings.join(" ").slice(0, 2_000) : null,
       consecutiveFailures: 0,

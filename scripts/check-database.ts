@@ -152,7 +152,7 @@ async function main() {
       counts.profile_mutation_grants !== 0 ||
       counts.policy_test_users !== 0 ||
       counts.monitored_sources !== 9 ||
-      counts.active_monitored_sources !== 0 ||
+      counts.active_monitored_sources !== 5 ||
       counts.discovery_candidates !== 1 ||
       !counts.legitimate_candidate_present ||
       counts.test_candidates !== 0 ||
@@ -160,23 +160,23 @@ async function main() {
       counts.discovery_score_overrides !== 0 ||
       counts.official_source_gap_alerts !== 0 ||
       counts.discovery_settings !== 1 ||
-      counts.recurring_monitoring_enabled ||
+      !counts.recurring_monitoring_enabled ||
       counts.automatic_drafting_enabled ||
       counts.deep_research_enabled ||
       counts.max_requests_per_day !== 80 ||
       counts.max_candidates_per_day !== 5 ||
       counts.scheduler_locks !== 0 ||
-      counts.source_health.some((source) => source.active || source.max_detail_items > 3) ||
+      counts.source_health.some((source) => !source.active || source.max_detail_items > 3) ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000001")?.min_check_interval_minutes !== 360 ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000002")?.min_check_interval_minutes !== 240 ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000003")?.min_check_interval_minutes !== 360 ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000004")?.min_check_interval_minutes !== 360 ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000009")?.min_check_interval_minutes !== 120 ||
-      expectedMigrations.length !== 8 ||
+      expectedMigrations.length !== 9 ||
       migrationLedger.length !== expectedMigrations.length ||
       !hashesMatch
     ) {
-      throw new Error("Database safety checks did not match the expected Phase 4.2 disabled state.");
+      throw new Error("Database safety checks did not match the expected limited official-source pilot state.");
     }
   } finally {
     await client.end();

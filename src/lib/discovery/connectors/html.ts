@@ -1,8 +1,22 @@
 import { classifyMeaningfulChange } from "../change-detection";
 import { canonicalizeSourceUrl, decodeHtmlEntities, normalizeMeaningfulText, sha256 } from "../normalize";
 import { discoveryUrlMatchesDomain } from "../safety";
-import type { ConnectorItem, ConnectorResult, DiscoverySource, ExtractionMethod } from "../types";
-import { connectorConfig, fetchSourceText, passesConfiguredIncludeTerms, type DiscoveryFetcher, type SourceConnector } from "./base";
+import type { ConnectorItem, ConnectorResult, DiscoverySource, ExtractionMethod, SourceHttpCacheEntry } from "../types";
+import {
+  connectorConfig,
+  emptyConnectorMetrics,
+  fetchSourceText,
+  passesConfiguredIncludeTerms,
+  sourceHttpCacheEntry,
+  type DiscoveryFetcher,
+  type SourceConnector,
+} from "./base";
+import {
+  DEFAULT_DETAIL_REFRESH_MINUTES,
+  detailRefreshDue,
+  knownSourceUrls,
+  seedKnownCacheEntry,
+} from "./cache-policy";
 
 function attributes(tag: string) {
   const values = new Map<string, string>();
@@ -249,26 +263,163 @@ export function parseHtmlListing(html: string, source: DiscoverySource, finalUrl
   return items;
 }
 
+function configuredRefreshMinutes(value: unknown) {
+  return typeof value === "number"
+    ? Math.max(60, Math.floor(value))
+    : DEFAULT_DETAIL_REFRESH_MINUTES;
+}
+
+function stableListingHash(items: ConnectorItem[], configuredUrls: string[]) {
+  return sha256(
+    [...items.map((item) => `${item.canonicalUrl ?? item.url}\n${item.contentHash}`), ...configuredUrls]
+      .sort()
+      .join("\n"),
+  );
+}
+
+function relevantPageReferences(html: string, finalUrl: string, source: DiscoverySource) {
+  const references = new Set<string>();
+  for (const match of html.matchAll(/(?:href|src)=["']([^"'#]+)["']/gi)) {
+    try {
+      const url = forceHttps(canonicalizeSourceUrl(decodeHtmlEntities(match[1]), finalUrl));
+      if (!discoveryUrlMatchesDomain(url, source.domain)) continue;
+      if (!/\b(?:media|video|trailer|screenshot|artwork|download|preorder)\b/i.test(new URL(url).pathname)) continue;
+      references.add(url);
+    } catch {
+      // Invalid or off-domain references are excluded from the semantic page signature.
+    }
+  }
+  return [...references].sort().slice(0, 250);
+}
+
+function detailUrlAllowed(source: DiscoverySource, url: string, prefixes: string[], configuredUrls: string[]) {
+  try {
+    const canonical = canonicalizeSourceUrl(url);
+    if (!discoveryUrlMatchesDomain(canonical, source.domain)) return false;
+    if (configuredUrls.includes(canonical)) return true;
+    const pathname = new URL(canonical).pathname;
+    return prefixes.length === 0 || prefixes.some((prefix) => pathname.startsWith(prefix));
+  } catch {
+    return false;
+  }
+}
+
+function cacheHealth(source: DiscoverySource) {
+  return source.healthStatus === "DEGRADED" ? "DEGRADED" as const : "HEALTHY" as const;
+}
+
+function mergeCacheEntry(
+  entries: Record<string, SourceHttpCacheEntry>,
+  key: string,
+  update: SourceHttpCacheEntry,
+) {
+  entries[key] = { ...entries[key], ...update };
+}
+
 export class HtmlListingConnector implements SourceConnector {
   async fetch(source: DiscoverySource, fetcher?: DiscoveryFetcher): Promise<ConnectorResult> {
-    const response = await fetchSourceText(source, fetcher, { accept: "HTML" });
     const config = connectorConfig(source, {
       maxDetailItems: 3,
       followDetails: false,
       clientRenderedListing: false,
       requireItems: false,
       detailUrls: [] as string[],
+      linkPrefixes: [] as string[],
+      detailRefreshMinutes: DEFAULT_DETAIL_REFRESH_MINUTES,
     });
-    const listingItems = parseHtmlListing(response.text, source, response.finalUrl);
+    const rootCache = sourceHttpCacheEntry(source, source.url);
+    const response = await fetchSourceText(source, fetcher, {
+      accept: "HTML",
+      cache: rootCache,
+    });
+    const cacheUpdates: Record<string, SourceHttpCacheEntry> = {
+      [response.cacheKey]: response.cacheUpdate,
+    };
+    const metrics = emptyConnectorMetrics({
+      listingRequests: response.requestCount,
+      conditionalRequests: response.conditionalRequest ? response.requestCount : 0,
+      notModifiedResponses: response.notModified ? 1 : 0,
+    });
+    const listingItems = response.notModified
+      ? []
+      : parseHtmlListing(response.text, source, response.finalUrl);
     const configuredUrls = Array.isArray(config.detailUrls)
-      ? config.detailUrls.filter((value): value is string => typeof value === "string")
+      ? config.detailUrls.flatMap((value): string[] => {
+          if (typeof value !== "string") return [];
+          try {
+            return [canonicalizeSourceUrl(value, response.finalUrl)];
+          } catch {
+            return [];
+          }
+        })
+      : [];
+    const prefixes = Array.isArray(config.linkPrefixes)
+      ? config.linkPrefixes.filter((value): value is string => typeof value === "string")
       : [];
     const shouldFetchDetails = Boolean(config.followDetails) || configuredUrls.length > 0;
     const maximumDetails = typeof config.maxDetailItems === "number"
       ? Math.max(1, Math.min(3, Math.floor(config.maxDetailItems)))
       : 3;
-    const detailUrls = [...new Set([...listingItems.map((item) => item.canonicalUrl ?? item.url), ...configuredUrls])]
-      .slice(0, maximumDetails);
+    const refreshMinutes = configuredRefreshMinutes(config.detailRefreshMinutes);
+    const knownUrls = knownSourceUrls(source);
+    const rootUrl = canonicalizeSourceUrl(source.url);
+    const cachedDetailUrls = Object.keys(source.httpCache ?? {}).filter((url) =>
+      canonicalizeSourceUrl(url) !== rootUrl
+      && detailUrlAllowed(source, url, prefixes, configuredUrls));
+    const knownDetailUrls = [...knownUrls].filter((url) =>
+      canonicalizeSourceUrl(url) !== rootUrl
+      && detailUrlAllowed(source, url, prefixes, configuredUrls));
+    const candidateDetailUrls = [...new Set([
+      ...listingItems.map((item) => item.canonicalUrl ?? item.url),
+      ...configuredUrls,
+      ...cachedDetailUrls,
+      ...knownDetailUrls,
+    ].map((url) => canonicalizeSourceUrl(url)))];
+    const listingHash = response.notModified
+      ? rootCache?.listingHash
+      : stableListingHash(listingItems, configuredUrls);
+    const listingChanged = response.notModified
+      ? false
+      : rootCache?.listingHash
+        ? rootCache.listingHash !== listingHash
+        : !source.lastContentHash
+          || (listingItems[0]?.contentHash ?? response.responseHash) !== source.lastContentHash;
+    mergeCacheEntry(cacheUpdates, response.cacheKey, {
+      ...(listingHash ? { listingHash, semanticHash: listingHash } : {}),
+    });
+
+    const listingItemsByUrl = new Map(
+      listingItems.map((item) => [canonicalizeSourceUrl(item.canonicalUrl ?? item.url), item]),
+    );
+    const prioritizedDetails: Array<{ url: string; priority: number }> = [];
+    for (const detailUrl of candidateDetailUrls) {
+      const existing = seedKnownCacheEntry(source, detailUrl);
+      const listingItem = listingItemsByUrl.get(detailUrl);
+      const isKnown = knownUrls.has(detailUrl) || Boolean(source.httpCache?.[detailUrl]);
+      const listingMetadataChanged = Boolean(
+        listingItem && existing.listingHash && existing.listingHash !== listingItem.contentHash,
+      );
+      const due = detailRefreshDue({
+        cache: existing,
+        fallbackCheckedAt: source.lastSuccessfulFetchAt,
+        refreshMinutes,
+      });
+      mergeCacheEntry(cacheUpdates, detailUrl, {
+        ...existing,
+        ...(listingItem ? { listingHash: listingItem.contentHash } : {}),
+      });
+      if (!shouldFetchDetails) continue;
+      if (!isKnown || listingMetadataChanged) prioritizedDetails.push({ url: detailUrl, priority: 0 });
+      else if (due) prioritizedDetails.push({ url: detailUrl, priority: 1 });
+      else metrics.knownUrlSkips += 1;
+    }
+    prioritizedDetails.sort((left, right) => left.priority - right.priority || left.url.localeCompare(right.url));
+    const detailUrls = prioritizedDetails.slice(0, maximumDetails).map(({ url }) => url);
+    metrics.detailFetchesDeferred = Math.max(0, prioritizedDetails.length - detailUrls.length);
+    metrics.detailFetchesAvoided = shouldFetchDetails
+      ? Math.max(0, candidateDetailUrls.length - detailUrls.length)
+      : 0;
+    metrics.requestsSaved = metrics.detailFetchesAvoided;
     const warnings: string[] = [];
     const detailItems: ConnectorItem[] = [];
     let requestCount = response.requestCount;
@@ -283,12 +434,21 @@ export class HtmlListingConnector implements SourceConnector {
     if (shouldFetchDetails) {
       for (const detailUrl of detailUrls) {
         try {
-          const detail = await fetchSourceText(source, fetcher, { url: detailUrl, accept: "HTML" });
+          const detail = await fetchSourceText(source, fetcher, {
+            url: detailUrl,
+            accept: "HTML",
+            cache: cacheUpdates[detailUrl] ?? sourceHttpCacheEntry(source, detailUrl),
+          });
           requestCount += detail.requestCount;
+          metrics.detailRequests += detail.requestCount;
+          if (detail.conditionalRequest) metrics.conditionalRequests += detail.requestCount;
+          if (detail.notModified) metrics.notModifiedResponses += 1;
           responseBytes += detail.responseBytes;
           responseHashes.push(detail.responseHash);
           lastHttpStatus = detail.httpStatus;
           successfulResponses += 1;
+          mergeCacheEntry(cacheUpdates, detail.cacheKey, detail.cacheUpdate);
+          if (detail.notModified) continue;
           const method = configuredUrls.includes(detailUrl) && listingItems.length === 0 ? "KNOWN_ARTICLE_METADATA" as const : undefined;
           const item = parseHtmlArticle(detail.text, source, detail.finalUrl, method);
           if (item) detailItems.push(item);
@@ -299,9 +459,17 @@ export class HtmlListingConnector implements SourceConnector {
       }
     }
 
-    const items = shouldFetchDetails ? detailItems : listingItems;
-    const extractionSucceeded = items.length > 0 || !Boolean(config.requireItems);
-    const health = !extractionSucceeded ? "FAILED" : warnings.length ? "DEGRADED" : "HEALTHY";
+    const items = shouldFetchDetails
+      ? detailItems
+      : listingChanged && !response.notModified ? listingItems : [];
+    const unchangedOrKnown = response.notModified
+      || !listingChanged
+      || (candidateDetailUrls.length > 0 && candidateDetailUrls.every((url) => knownUrls.has(url)));
+    if (unchangedOrKnown && items.length === 0) metrics.hashUnchangedExits += 1;
+    const extractionSucceeded = items.length > 0 || unchangedOrKnown || !Boolean(config.requireItems);
+    const health = !extractionSucceeded
+      ? "FAILED"
+      : warnings.length || cacheHealth(source) === "DEGRADED" ? "DEGRADED" : "HEALTHY";
     const extractionMethod = items[0]?.metadata.extractionMethod as ExtractionMethod | undefined
       ?? (listingItems.length ? "SSR_HTML" : "NONE");
     return {
@@ -317,25 +485,46 @@ export class HtmlListingConnector implements SourceConnector {
       extractionMethod,
       extractionSucceeded,
       health,
-      lastContentHash: items[0]?.contentHash,
+      lastContentHash: listingHash ?? source.lastContentHash ?? undefined,
       warnings: !extractionSucceeded && warnings.length === 0
         ? ["The connector fetched the source but could not extract any required relevant items."]
         : warnings,
+      cacheUpdates,
+      metrics,
     };
   }
 }
 
 export class HtmlChangeConnector implements SourceConnector {
   async fetch(source: DiscoverySource, fetcher?: DiscoveryFetcher): Promise<ConnectorResult> {
-    const response = await fetchSourceText(source, fetcher, { accept: "HTML" });
     const config = connectorConfig(source, {
       discoverOfficialArticleLinks: false,
       maxDetailItems: 3,
+      detailRefreshMinutes: DEFAULT_DETAIL_REFRESH_MINUTES,
     });
-    const parsed = parseHtmlArticle(response.text, source, response.finalUrl);
-    const normalizedText = normalizeMeaningfulText(response.text).slice(0, 100_000);
-    const canonicalUrl = canonicalFromHtml(response.text, response.finalUrl);
-    const item: ConnectorItem = parsed ?? {
+    const rootCache = sourceHttpCacheEntry(source, source.url);
+    const response = await fetchSourceText(source, fetcher, {
+      accept: "HTML",
+      cache: rootCache,
+    });
+    const cacheUpdates: Record<string, SourceHttpCacheEntry> = {
+      [response.cacheKey]: response.cacheUpdate,
+    };
+    const metrics = emptyConnectorMetrics({
+      listingRequests: response.requestCount,
+      conditionalRequests: response.conditionalRequest ? response.requestCount : 0,
+      notModifiedResponses: response.notModified ? 1 : 0,
+    });
+    const normalizedText = response.notModified
+      ? ""
+      : normalizeMeaningfulText(response.text).slice(0, 100_000);
+    const canonicalUrl = response.notModified
+      ? canonicalizeSourceUrl(response.finalUrl)
+      : canonicalFromHtml(response.text, response.finalUrl);
+    const parsed = response.notModified
+      ? null
+      : parseHtmlArticle(response.text, source, response.finalUrl);
+    const item: ConnectorItem | null = response.notModified ? null : parsed ?? {
       title: pageTitle(response.text) || source.name,
       url: canonicalUrl,
       canonicalUrl,
@@ -346,7 +535,24 @@ export class HtmlChangeConnector implements SourceConnector {
       directEvidence: source.isFirstParty,
       metadata: { connector: "HTML_CHANGE", extractionMethod: "SSR_HTML", normalizedCharacterCount: normalizedText.length },
     };
-    const discoveredOfficialUrls = extractRockstarNewswireUrls(response.text, response.finalUrl);
+    const discoveredOfficialUrls = response.notModified
+      ? []
+      : extractRockstarNewswireUrls(response.text, response.finalUrl);
+    const semanticHash = response.notModified
+      ? rootCache?.semanticHash
+      : sha256([
+          item?.contentHash ?? sha256(normalizedText),
+          ...relevantPageReferences(response.text, response.finalUrl, source),
+          ...discoveredOfficialUrls,
+        ].join("\n"));
+    const rootChanged = response.notModified
+      ? false
+      : rootCache?.semanticHash
+        ? rootCache.semanticHash !== semanticHash
+        : !source.lastContentHash || source.lastContentHash !== item?.contentHash;
+    mergeCacheEntry(cacheUpdates, response.cacheKey, {
+      ...(semanticHash ? { semanticHash } : {}),
+    });
     const detailItems: ConnectorItem[] = [];
     const unresolvedOfficialUrls: string[] = [];
     const warnings: string[] = [];
@@ -359,15 +565,67 @@ export class HtmlChangeConnector implements SourceConnector {
       const maximumDetails = typeof config.maxDetailItems === "number"
         ? Math.max(1, Math.min(3, Math.floor(config.maxDetailItems)))
         : 3;
-      for (const detailUrl of discoveredOfficialUrls.slice(0, maximumDetails)) {
-        if (canonicalizeSourceUrl(detailUrl) === canonicalizeSourceUrl(item.canonicalUrl ?? item.url)) continue;
+      const refreshMinutes = configuredRefreshMinutes(config.detailRefreshMinutes);
+      const knownUrls = knownSourceUrls(source);
+      const cachedOfficialUrls = Object.keys(source.httpCache ?? {}).filter((url) => {
         try {
-          const detail = await fetchSourceText(source, fetcher, { url: detailUrl, accept: "HTML" });
+          return /\/newswire\/article\//i.test(new URL(url).pathname);
+        } catch {
+          return false;
+        }
+      });
+      const knownOfficialUrls = [...knownUrls].filter((url) => {
+        try {
+          return /\/newswire\/article\//i.test(new URL(url).pathname);
+        } catch {
+          return false;
+        }
+      });
+      const candidateDetailUrls = [...new Set([
+        ...discoveredOfficialUrls,
+        ...cachedOfficialUrls,
+        ...knownOfficialUrls,
+      ].map((url) => canonicalizeSourceUrl(url)))].filter((url) =>
+        canonicalizeSourceUrl(url) !== canonicalizeSourceUrl(item?.canonicalUrl ?? item?.url ?? source.url));
+      const prioritizedDetails: Array<{ url: string; priority: number }> = [];
+      for (const detailUrl of candidateDetailUrls) {
+        const existing = seedKnownCacheEntry(source, detailUrl);
+        const isKnown = knownUrls.has(detailUrl) || Boolean(source.httpCache?.[detailUrl]);
+        const due = detailRefreshDue({
+          cache: existing,
+          fallbackCheckedAt: source.lastSuccessfulFetchAt,
+          refreshMinutes,
+        });
+        mergeCacheEntry(cacheUpdates, detailUrl, {
+          ...existing,
+          listingHash: sha256(detailUrl),
+        });
+        if (!isKnown) prioritizedDetails.push({ url: detailUrl, priority: 0 });
+        else if (due) prioritizedDetails.push({ url: detailUrl, priority: 1 });
+        else metrics.knownUrlSkips += 1;
+      }
+      prioritizedDetails.sort((left, right) => left.priority - right.priority || left.url.localeCompare(right.url));
+      const detailUrls = prioritizedDetails.slice(0, maximumDetails).map(({ url }) => url);
+      metrics.detailFetchesDeferred = Math.max(0, prioritizedDetails.length - detailUrls.length);
+      metrics.detailFetchesAvoided = Math.max(0, candidateDetailUrls.length - detailUrls.length);
+      metrics.requestsSaved = metrics.detailFetchesAvoided;
+      for (const detailUrl of detailUrls) {
+        try {
+          const detail = await fetchSourceText(source, fetcher, {
+            url: detailUrl,
+            accept: "HTML",
+            cache: cacheUpdates[detailUrl] ?? sourceHttpCacheEntry(source, detailUrl),
+          });
           requestCount += detail.requestCount;
+          metrics.detailRequests += detail.requestCount;
+          if (detail.conditionalRequest) metrics.conditionalRequests += detail.requestCount;
+          if (detail.notModified) metrics.notModifiedResponses += 1;
           responseBytes += detail.responseBytes;
           responseHashes.push(detail.responseHash);
           lastHttpStatus = detail.httpStatus;
           successfulResponses += 1;
+          mergeCacheEntry(cacheUpdates, detail.cacheKey, detail.cacheUpdate);
+          if (detail.notModified) continue;
           const parsedDetail = parseHtmlArticle(detail.text, source, detail.finalUrl);
           if (parsedDetail) detailItems.push(parsedDetail);
           else unresolvedOfficialUrls.push(detailUrl);
@@ -377,13 +635,18 @@ export class HtmlChangeConnector implements SourceConnector {
         }
       }
     }
-    item.metadata = {
-      ...item.metadata,
-      referencedOfficialUrls: discoveredOfficialUrls,
-      unresolvedOfficialUrls,
-    };
-    const extractionSucceeded = normalizedText.length >= 25;
-    const items = extractionSucceeded ? [item, ...detailItems] : [];
+    if (item) {
+      item.metadata = {
+        ...item.metadata,
+        referencedOfficialUrls: discoveredOfficialUrls,
+        unresolvedOfficialUrls,
+      };
+    }
+    const extractionSucceeded = response.notModified || normalizedText.length >= 25;
+    const items = extractionSucceeded
+      ? [...(rootChanged && item ? [item] : []), ...detailItems]
+      : [];
+    if (!rootChanged && detailItems.length === 0) metrics.hashUnchangedExits += 1;
     return {
       sourceUrl: response.finalUrl,
       fetchedAt: new Date(),
@@ -394,13 +657,21 @@ export class HtmlChangeConnector implements SourceConnector {
       successfulResponses,
       successfulExtractions: items.length,
       items,
-      extractionMethod: (item.metadata.extractionMethod as ExtractionMethod | undefined) ?? "SSR_HTML",
+      extractionMethod: (item?.metadata.extractionMethod as ExtractionMethod | undefined)
+        ?? (source.lastExtractionMethod as ExtractionMethod | null | undefined)
+        ?? "SSR_HTML",
       extractionSucceeded,
-      health: extractionSucceeded ? unresolvedOfficialUrls.length ? "DEGRADED" : "HEALTHY" : "FAILED",
-      lastContentHash: extractionSucceeded ? item.contentHash : undefined,
+      health: extractionSucceeded
+        ? unresolvedOfficialUrls.length ? "DEGRADED" : cacheHealth(source)
+        : "FAILED",
+      lastContentHash: extractionSucceeded
+        ? item?.contentHash ?? source.lastContentHash ?? undefined
+        : undefined,
       warnings: extractionSucceeded
         ? warnings
         : ["The public page did not expose enough stable text or metadata to monitor safely."],
+      cacheUpdates,
+      metrics,
     };
   }
 }

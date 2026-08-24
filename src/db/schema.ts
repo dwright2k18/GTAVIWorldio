@@ -793,6 +793,22 @@ export const monitoredSources = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
+    httpCache: jsonb("http_cache")
+      .$type<
+        Record<
+          string,
+          {
+            etag?: string;
+            lastModified?: string;
+            contentHash?: string;
+            semanticHash?: string;
+            listingHash?: string;
+            checkedAt?: string;
+          }
+        >
+      >()
+      .notNull()
+      .default({}),
     healthStatus: sourceHealthStatusEnum("health_status")
       .notNull()
       .default("NOT_CHECKED"),

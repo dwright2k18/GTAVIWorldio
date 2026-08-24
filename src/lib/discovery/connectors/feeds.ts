@@ -1,7 +1,14 @@
 import { canonicalizeSourceUrl, decodeHtmlEntities, normalizeMeaningfulText, sha256 } from "../normalize";
 import { discoveryUrlMatchesDomain } from "../safety";
 import type { ConnectorItem, ConnectorResult, DiscoverySource } from "../types";
-import { fetchSourceText, passesConfiguredIncludeTerms, type DiscoveryFetcher, type SourceConnector } from "./base";
+import {
+  emptyConnectorMetrics,
+  fetchSourceText,
+  passesConfiguredIncludeTerms,
+  sourceHttpCacheEntry,
+  type DiscoveryFetcher,
+  type SourceConnector,
+} from "./base";
 import { extractRockstarNewswireUrls } from "./html";
 
 function firstTag(block: string, names: string[]) {
@@ -71,7 +78,36 @@ export function parseFeedItems(
 
 export class FeedConnector implements SourceConnector {
   async fetch(source: DiscoverySource, fetcher?: DiscoveryFetcher): Promise<ConnectorResult> {
-    const response = await fetchSourceText(source, fetcher);
+    const response = await fetchSourceText(source, fetcher, {
+      cache: sourceHttpCacheEntry(source, source.url),
+    });
+    const cacheUpdates = { [response.cacheKey]: response.cacheUpdate };
+    const metrics = emptyConnectorMetrics({
+      listingRequests: response.requestCount,
+      conditionalRequests: response.conditionalRequest ? response.requestCount : 0,
+      notModifiedResponses: response.notModified ? 1 : 0,
+      hashUnchangedExits: response.notModified || response.responseHash === source.lastContentHash ? 1 : 0,
+    });
+    if (response.notModified || response.responseHash === source.lastContentHash) {
+      return {
+        sourceUrl: response.finalUrl,
+        fetchedAt: new Date(),
+        httpStatus: response.httpStatus,
+        responseBytes: response.responseBytes,
+        responseHash: response.responseHash,
+        requestCount: response.requestCount,
+        successfulResponses: 1,
+        successfulExtractions: 0,
+        items: [],
+        extractionMethod: source.domain === "youtube.com" ? "OFFICIAL_VIDEO_FEED" : "STRUCTURED_FEED",
+        extractionSucceeded: true,
+        health: "HEALTHY",
+        lastContentHash: source.lastContentHash ?? response.responseHash,
+        warnings: [],
+        cacheUpdates,
+        metrics,
+      };
+    }
     const maximumItems = typeof source.connectorConfig.maxItems === "number"
       ? Math.max(1, Math.min(50, Math.floor(source.connectorConfig.maxItems)))
       : 25;
@@ -93,6 +129,8 @@ export class FeedConnector implements SourceConnector {
       health: extractionSucceeded ? "HEALTHY" : "FAILED",
       lastContentHash: response.responseHash,
       warnings: extractionSucceeded ? [] : ["The public feed was fetched but contained no required relevant items."],
+      cacheUpdates,
+      metrics,
     };
   }
 }
@@ -135,7 +173,36 @@ export function parseJsonFeedItems(
 
 export class JsonFeedConnector implements SourceConnector {
   async fetch(source: DiscoverySource, fetcher?: DiscoveryFetcher): Promise<ConnectorResult> {
-    const response = await fetchSourceText(source, fetcher);
+    const response = await fetchSourceText(source, fetcher, {
+      cache: sourceHttpCacheEntry(source, source.url),
+    });
+    const cacheUpdates = { [response.cacheKey]: response.cacheUpdate };
+    const metrics = emptyConnectorMetrics({
+      listingRequests: response.requestCount,
+      conditionalRequests: response.conditionalRequest ? response.requestCount : 0,
+      notModifiedResponses: response.notModified ? 1 : 0,
+      hashUnchangedExits: response.notModified || response.responseHash === source.lastContentHash ? 1 : 0,
+    });
+    if (response.notModified || response.responseHash === source.lastContentHash) {
+      return {
+        sourceUrl: response.finalUrl,
+        fetchedAt: new Date(),
+        httpStatus: response.httpStatus,
+        responseBytes: response.responseBytes,
+        responseHash: response.responseHash,
+        requestCount: response.requestCount,
+        successfulResponses: 1,
+        successfulExtractions: 0,
+        items: [],
+        extractionMethod: "STRUCTURED_FEED",
+        extractionSucceeded: true,
+        health: "HEALTHY",
+        lastContentHash: source.lastContentHash ?? response.responseHash,
+        warnings: [],
+        cacheUpdates,
+        metrics,
+      };
+    }
     const maximumItems = typeof source.connectorConfig.maxItems === "number"
       ? Math.max(1, Math.min(50, Math.floor(source.connectorConfig.maxItems)))
       : 25;
@@ -156,6 +223,8 @@ export class JsonFeedConnector implements SourceConnector {
       health: "HEALTHY",
       lastContentHash: response.responseHash,
       warnings: [],
+      cacheUpdates,
+      metrics,
     };
   }
 }
