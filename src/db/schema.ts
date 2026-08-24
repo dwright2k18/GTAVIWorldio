@@ -1289,6 +1289,7 @@ export const discoverySettings = pgTable("discovery_settings", {
     .default(false),
   maxRequestsPerDay: integer("max_requests_per_day").notNull().default(100),
   maxCandidatesPerRun: integer("max_candidates_per_run").notNull().default(20),
+  maxCandidatesPerDay: integer("max_candidates_per_day").notNull().default(5),
   maxAiTriageCallsPerDay: integer("max_ai_triage_calls_per_day")
     .notNull()
     .default(0),
@@ -1302,6 +1303,18 @@ export const discoverySettings = pgTable("discovery_settings", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const discoveryExecutionLocks = pgTable("discovery_execution_locks", {
+  lockName: text("lock_name").primaryKey(),
+  lockToken: uuid("lock_token").notNull(),
+  acquiredAt: timestamp("acquired_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

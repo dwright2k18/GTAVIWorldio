@@ -36,6 +36,9 @@ async function main() {
       recurring_monitoring_enabled: boolean;
       automatic_drafting_enabled: boolean;
       deep_research_enabled: boolean;
+      max_requests_per_day: number;
+      max_candidates_per_day: number;
+      scheduler_locks: number;
       candidate_evidence_count: number;
       discovery_score_runs: number;
       discovery_score_overrides: number;
@@ -55,6 +58,8 @@ async function main() {
         last_error: string | null;
         coverage_group: string | null;
         signal_label: string | null;
+        min_check_interval_minutes: number;
+        max_detail_items: number;
       }>;
     }>
     >`
@@ -78,6 +83,9 @@ async function main() {
       (select coalesce(bool_or(recurring_monitoring_enabled), false) from public.discovery_settings) as recurring_monitoring_enabled,
       (select coalesce(bool_or(automatic_drafting_enabled), false) from public.discovery_settings) as automatic_drafting_enabled,
       (select coalesce(bool_or(deep_research_enabled), false) from public.discovery_settings) as deep_research_enabled
+      ,(select max(max_requests_per_day)::int from public.discovery_settings) as max_requests_per_day
+      ,(select max(max_candidates_per_day)::int from public.discovery_settings) as max_candidates_per_day
+      ,(select count(*)::int from public.discovery_execution_locks) as scheduler_locks
       ,(select count(*)::int from public.candidate_evidence where candidate_id = '70db3fc3-0671-4824-80b4-6682ac6d7b76') as candidate_evidence_count
       ,(select count(*)::int from public.discovery_score_runs) as discovery_score_runs
       ,(select count(*)::int from public.discovery_score_overrides) as discovery_score_overrides
@@ -97,6 +105,8 @@ async function main() {
         'last_error', last_error
         ,'coverage_group', coverage_group
         ,'signal_label', signal_label
+        ,'min_check_interval_minutes', min_check_interval_minutes
+        ,'max_detail_items', coalesce((connector_config->>'maxDetailItems')::int, 0)
       ) order by id), '[]'::json) from public.monitored_sources where id in (
         '41000000-0000-4000-8000-000000000001',
         '41000000-0000-4000-8000-000000000002',
@@ -106,7 +116,7 @@ async function main() {
       )) as source_health
     `;
 
-    const migrationSql = await readFile("drizzle/0006_phase_4_2_discovery_scoring.sql");
+    const migrationSql = await readFile("drizzle/0007_phase_4_3_scheduler_hardening.sql");
     const migrationHash = createHash("sha256").update(migrationSql).digest("hex");
     const [migrationState] = await client<Array<{ total: number; latest_hash: string }>>`
       select count(*)::int as total, (array_agg(hash order by created_at desc))[1] as latest_hash
@@ -124,7 +134,7 @@ async function main() {
       counts.published !== 0 ||
       counts.scheduled !== 0 ||
       counts.evergreen_pages !== 11 ||
-      counts.rls_tables !== 31 ||
+      counts.rls_tables !== 32 ||
       counts.anonymous_table_grants !== 0 ||
       counts.profile_mutation_grants !== 0 ||
       counts.policy_test_users !== 0 ||
@@ -140,7 +150,16 @@ async function main() {
       counts.recurring_monitoring_enabled ||
       counts.automatic_drafting_enabled ||
       counts.deep_research_enabled ||
-      migrationState.total !== 7 ||
+      counts.max_requests_per_day !== 80 ||
+      counts.max_candidates_per_day !== 5 ||
+      counts.scheduler_locks !== 0 ||
+      counts.source_health.some((source) => source.active || source.max_detail_items > 3) ||
+      counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000001")?.min_check_interval_minutes !== 360 ||
+      counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000002")?.min_check_interval_minutes !== 240 ||
+      counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000003")?.min_check_interval_minutes !== 360 ||
+      counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000004")?.min_check_interval_minutes !== 360 ||
+      counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000009")?.min_check_interval_minutes !== 120 ||
+      migrationState.total !== 8 ||
       migrationState.latest_hash !== migrationHash
     ) {
       throw new Error("Database safety checks did not match the expected Phase 4.2 disabled state.");

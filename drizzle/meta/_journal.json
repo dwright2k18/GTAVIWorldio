@@ -50,6 +50,13 @@
       "when": 1787354000000,
       "tag": "0006_phase_4_2_discovery_scoring",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787443200000,
+      "tag": "0007_phase_4_3_scheduler_hardening",
+      "breakpoints": true
     }
   ]
 }

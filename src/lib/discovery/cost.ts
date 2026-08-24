@@ -1,6 +1,7 @@
 export const safeStartingLimits = {
-  maxRequestsPerDay: 100,
-  maxCandidatesPerRun: 20,
+  maxRequestsPerDay: 80,
+  maxCandidatesPerRun: 5,
+  maxCandidatesPerDay: 5,
   maxAiTriageCallsPerDay: 0,
   maxAiResearchCallsPerDay: 0,
   maxEstimatedMonthlyCostCents: 0,

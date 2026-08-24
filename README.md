@@ -61,6 +61,21 @@ No environment variables are required for preview deployments. Development and
 preview builds default to `noindex` so pre-launch content cannot enter search
 results accidentally.
 
+## Discovery scheduler safety
+
+The official-source scheduler is configured to call `/api/cron/discovery` every
+two hours. Vercel must provide the server-only `CRON_SECRET`, and Production must
+set `DISCOVERY_RECURRING_ENABLED=true`. Those environment controls are necessary
+but not sufficient: the newsroom database switch and each individual source must
+also be active before a connector can run.
+
+The Phase 4.3 hardening migration intentionally leaves the database switch and
+all nine sources off. It also applies an atomic limit of 80 source requests and
+five new candidates per UTC day, caps detail-page fetches at three per connector
+execution, and prevents overlapping discovery cycles with an expiring database
+lock. No drafting, publishing, paid AI, analytics, or public indexing is enabled
+by the scheduler configuration.
+
 ## Pre-launch feature gates
 
 The following public environment variables default to off. Enable them only

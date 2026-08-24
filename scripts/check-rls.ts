@@ -1085,6 +1085,44 @@ async function main() {
           ).length === 1,
         },
         {
+          label: "anonymous users cannot create scheduler locks",
+          apiRole: "anon",
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              insert into public.discovery_execution_locks (
+                lock_name, lock_token, expires_at
+              ) values (
+                ${`rls-anon-lock-${runToken}`}, ${randomUUID()}, now() + interval '1 minute'
+              ) returning lock_name
+            `
+          ).length > 0,
+        },
+        {
+          label: "authenticated newsroom users cannot invoke scheduler lock functions",
+          userId: authUsers.owner,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              select public.acquire_discovery_execution_lock(
+                ${`rls-member-lock-${runToken}`}, ${randomUUID()}::uuid, 60
+              ) as acquired
+            `
+          ).some(({ acquired }) => acquired === true),
+        },
+        {
+          label: "authenticated newsroom users cannot reserve automation usage through the direct API",
+          userId: authUsers.admin,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              select public.reserve_discovery_daily_usage(
+                ${`rls-${runToken}`}, 1, 0, 80, 5
+              ) as reserved
+            `
+          ).some(({ reserved }) => reserved === true),
+        },
+        {
           label: "administrators can delete discovery candidates",
           userId: authUsers.admin,
           expected: "ALLOW",

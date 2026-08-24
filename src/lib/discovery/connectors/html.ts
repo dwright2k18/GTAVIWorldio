@@ -253,7 +253,7 @@ export class HtmlListingConnector implements SourceConnector {
   async fetch(source: DiscoverySource, fetcher?: DiscoveryFetcher): Promise<ConnectorResult> {
     const response = await fetchSourceText(source, fetcher, { accept: "HTML" });
     const config = connectorConfig(source, {
-      maxDetailItems: 5,
+      maxDetailItems: 3,
       followDetails: false,
       clientRenderedListing: false,
       requireItems: false,
@@ -265,8 +265,8 @@ export class HtmlListingConnector implements SourceConnector {
       : [];
     const shouldFetchDetails = Boolean(config.followDetails) || configuredUrls.length > 0;
     const maximumDetails = typeof config.maxDetailItems === "number"
-      ? Math.max(1, Math.min(10, Math.floor(config.maxDetailItems)))
-      : 5;
+      ? Math.max(1, Math.min(3, Math.floor(config.maxDetailItems)))
+      : 3;
     const detailUrls = [...new Set([...listingItems.map((item) => item.canonicalUrl ?? item.url), ...configuredUrls])]
       .slice(0, maximumDetails);
     const warnings: string[] = [];
@@ -357,7 +357,7 @@ export class HtmlChangeConnector implements SourceConnector {
     let successfulResponses = 1;
     if (Boolean(config.discoverOfficialArticleLinks) && source.domain === "rockstargames.com") {
       const maximumDetails = typeof config.maxDetailItems === "number"
-        ? Math.max(1, Math.min(5, Math.floor(config.maxDetailItems)))
+        ? Math.max(1, Math.min(3, Math.floor(config.maxDetailItems)))
         : 3;
       for (const detailUrl of discoveredOfficialUrls.slice(0, maximumDetails)) {
         if (canonicalizeSourceUrl(detailUrl) === canonicalizeSourceUrl(item.canonicalUrl ?? item.url)) continue;

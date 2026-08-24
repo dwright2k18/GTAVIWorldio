@@ -30,6 +30,14 @@ import type { DiscoverySource } from "./types";
 import { recurringDiscoveryEnabled } from "./pipeline";
 import { buildOfficialSourceGap, classifyOfficialUrl, officialReferencesFromMetadata } from "./official-consensus";
 import { normalizeHeadline } from "./normalize";
+import {
+  createDailyBudgetedFetcher,
+  DailyDiscoveryRequestLimitReached,
+  discoveryUsageDate,
+  releaseDailyCandidateSlot,
+  reserveDailyCandidateSlot,
+} from "./budgets";
+import { connectorFailureState, CONNECTOR_FAILURE_THRESHOLD } from "./failure-policy";
 
 type IngestionMode = "TEST_ONLY" | "MANUAL_TEST" | "RECURRING";
 
@@ -37,8 +45,43 @@ function asDiscoverySource(source: typeof monitoredSources.$inferSelect): Discov
   return source;
 }
 
-function nextUtcDate() {
-  return new Date().toISOString().slice(0, 10);
+async function ensureDiscoveryLimitAlert(options: {
+  sourceId: string;
+  title: string;
+  detail: string;
+}) {
+  const [existing] = await db.select({ id: discoveryAlerts.id })
+    .from(discoveryAlerts)
+    .where(and(
+      eq(discoveryAlerts.sourceId, options.sourceId),
+      eq(discoveryAlerts.alertType, "COST_LIMIT_WARNING"),
+      eq(discoveryAlerts.status, "NEW"),
+    ))
+    .limit(1);
+  if (!existing) {
+    await db.insert(discoveryAlerts).values({
+      sourceId: options.sourceId,
+      alertType: "COST_LIMIT_WARNING",
+      priority: 70,
+      title: options.title,
+      detail: options.detail,
+    });
+  }
+}
+
+async function recordResponseBytes(usageDate: string, responseBytes: number) {
+  await db.insert(discoveryUsageDaily).values({
+    usageDate,
+    requestCount: 0,
+    responseBytes,
+    candidatesCreated: 0,
+  }).onConflictDoUpdate({
+    target: discoveryUsageDaily.usageDate,
+    set: {
+      responseBytes: sql`${discoveryUsageDaily.responseBytes} + ${responseBytes}`,
+      updatedAt: new Date(),
+    },
+  });
 }
 
 export async function runDiscoverySource(
@@ -94,29 +137,27 @@ export async function runDiscoverySource(
       return { status: "RATE_LIMITED" as const, candidates: [] };
     }
 
-    const [dailyUsage] = await db
-      .select({ requestCount: discoveryUsageDaily.requestCount })
-      .from(discoveryUsageDaily)
-      .where(eq(discoveryUsageDaily.usageDate, nextUtcDate()))
-      .limit(1);
-    if ((dailyUsage?.requestCount ?? 0) >= settings.maxRequestsPerDay) {
-      await db.insert(sourceFetchRuns).values({
-        sourceId: source.id,
-        status: "SKIPPED",
-        requestCount: 0,
-        completedAt: new Date(),
-        errorCode: "DAILY_REQUEST_LIMIT",
-        errorMessage: "The configured daily discovery request limit has been reached.",
-      });
-      return { status: "DAILY_RATE_LIMITED" as const, candidates: [] };
-    }
   }
 
   const startedAt = new Date();
+  const usageDate = discoveryUsageDate(startedAt);
+  const requestLimit = settings?.maxRequestsPerDay ?? 80;
+  const dailyCandidateLimit = settings?.maxCandidatesPerDay ?? 5;
+  const requestBudget = options.mode === "TEST_ONLY"
+    ? null
+    : createDailyBudgetedFetcher({
+        fetcher: options.fetcher ?? fetch,
+        usageDate,
+        requestLimit,
+        candidateLimit: dailyCandidateLimit,
+      });
   try {
-    const result = await connectorFor(asDiscoverySource(source)).fetch(asDiscoverySource(source), options.fetcher);
-    const candidateLimit = settings?.maxCandidatesPerRun ?? 20;
-    const scoredCandidates = result.items.slice(0, candidateLimit).map((item) => {
+    const result = await connectorFor(asDiscoverySource(source)).fetch(
+      asDiscoverySource(source),
+      requestBudget?.fetcher ?? options.fetcher,
+    );
+    const candidateLimitPerRun = settings?.maxCandidatesPerRun ?? 5;
+    const scoredCandidates = result.items.slice(0, candidateLimitPerRun).map((item) => {
       const scored = scoreCandidate(asDiscoverySource(source), item, {
         independentSourceCount: 1,
         evidenceComplete: Boolean(item.summary?.trim()),
@@ -131,7 +172,7 @@ export async function runDiscoverySource(
 
     const completedAt = new Date();
     if (!result.extractionSucceeded || result.health === "FAILED") {
-      const failures = source.consecutiveFailures + 1;
+      const failure = connectorFailureState(source.consecutiveFailures, completedAt);
       const message = result.warnings.join(" ").slice(0, 2_000) || "The connector could not extract required public source data.";
       await db.insert(sourceFetchRuns).values({
         sourceId: source.id,
@@ -150,16 +191,15 @@ export async function runDiscoverySource(
         metadata: { extractionMethod: result.extractionMethod, warnings: result.warnings },
       });
       await db.update(monitoredSources).set({
-        healthStatus: failures >= 3 ? "CIRCUIT_OPEN" : "FAILED",
+        healthStatus: failure.healthStatus,
         lastCheckedAt: completedAt,
-        lastSuccessfulFetchAt: completedAt,
         lastFailureAt: completedAt,
         lastHttpStatus: result.httpStatus,
         lastExtractionMethod: result.extractionMethod,
         lastContentHash: result.lastContentHash ?? result.responseHash,
         lastError: message,
-        consecutiveFailures: failures,
-        circuitOpenUntil: failures >= 3 ? new Date(completedAt.valueOf() + 6 * 3_600_000) : null,
+        consecutiveFailures: failure.consecutiveFailures,
+        circuitOpenUntil: failure.circuitOpenUntil,
       }).where(eq(monitoredSources.id, source.id));
       await db.insert(discoveryAuditLogs).values({
         actorType: "AUTOMATION",
@@ -171,11 +211,12 @@ export async function runDiscoverySource(
         await db.insert(discoveryAlerts).values({
           sourceId: source.id,
           alertType: "SOURCE_CONNECTOR_FAILURE",
-          priority: failures >= 3 ? 85 : 65,
+          priority: failure.consecutiveFailures >= CONNECTOR_FAILURE_THRESHOLD ? 85 : 65,
           title: `${source.name} connector needs attention`,
           detail: message,
         });
       }
+      await recordResponseBytes(usageDate, result.responseBytes);
       return { status: "FAILED" as const, result, candidates: scoredCandidates, created: 0, duplicates: 0, assessments: [] };
     }
 
@@ -249,6 +290,7 @@ export async function runDiscoverySource(
     let newUrls = 0;
     let knownUrls = 0;
     let evidenceAttached = 0;
+    let candidateLimitSuppressions = 0;
     const assessments: Array<{ title: string; status: string; reason: string; matchingCandidateId?: string }> = [];
     const allowCandidateCreation = options.mode === "RECURRING" || options.allowCandidateCreation === true;
 
@@ -360,63 +402,121 @@ export async function runDiscoverySource(
         continue;
       }
 
-      const eventKey = clusterEventKey(item.title) || item.contentHash.slice(0, 24);
-      await db.insert(storyClusters).values({
-        title: item.title,
-        normalizedEventKey: eventKey,
-        primaryEvent: research.summary,
-        primarySourceId: source.id,
-        verificationStatus: scored.verificationRecommendation,
-        confidenceScore: scored.confidenceScore,
-      }).onConflictDoNothing({ target: storyClusters.normalizedEventKey });
-      const [cluster] = await db.select().from(storyClusters).where(eq(storyClusters.normalizedEventKey, eventKey)).limit(1);
-      if (!cluster) throw new Error("Story cluster could not be prepared.");
+      const candidateSlotReserved = await reserveDailyCandidateSlot({
+        usageDate,
+        requestLimit,
+        candidateLimit: dailyCandidateLimit,
+      });
+      if (!candidateSlotReserved) {
+        candidateLimitSuppressions += 1;
+        await db.insert(discoveryAuditLogs).values({
+          actorType: "AUTOMATION",
+          action: "CANDIDATE_DAILY_LIMIT_SUPPRESSED",
+          reason: "The official signal was retained as a source snapshot, but the global daily candidate limit prevented candidate creation.",
+          metadata: {
+            sourceId: source.id,
+            sourceUrl: canonicalUrl,
+            usageDate,
+            candidateLimit: dailyCandidateLimit,
+            publishing: false,
+          },
+        });
+        await ensureDiscoveryLimitAlert({
+          sourceId: source.id,
+          title: "Daily discovery candidate limit reached",
+          detail: `The ${dailyCandidateLimit}-candidate UTC daily pilot limit suppressed additional candidate creation. Source snapshots remain available for review.`,
+        });
+        existingFingerprints.push({
+          id: `run:${item.contentHash}`,
+          sourceId: source.id,
+          canonicalUrl,
+          normalizedTitle: scored.normalizedTitle,
+          contentHash: item.contentHash,
+          sourcePublishedAt: item.publishedAt ?? null,
+        });
+        continue;
+      }
 
-      const [candidate] = await db.insert(discoveryCandidates).values({
-        clusterId: cluster.id,
-        sourceId: source.id,
-        title: item.title,
-        normalizedTitle: scored.normalizedTitle,
-        sourceUrl: item.url,
-        canonicalUrl,
-        sourceAuthor: item.author,
-        sourcePublishedAt: item.publishedAt ?? null,
-        excerpt: item.summary,
-        sourceHash: item.sourceHash,
-        contentHash: item.contentHash,
-        changeType: item.changeType,
-        status: duplicate.status === "LIKELY_DUPLICATE" ? "DUPLICATE" : "DISCOVERED",
-        duplicateStatus: duplicate.status,
-        verificationRecommendation: scored.verificationRecommendation,
-        confidenceScore: scored.confidenceScore,
-        newsworthinessScore: scored.newsworthinessScore,
-        seoOpportunityScore: scored.seoOpportunityScore,
-        trendScore: scored.trendScore,
-        contentOpportunityScore: scored.contentOpportunityScore,
-        quickHitScore: scored.quickHitScore,
-        primaryVideoScore: scored.primaryVideoScore,
-        primaryTopic: scored.primaryTopic,
-        secondaryTopics: scored.secondaryTopics,
-        searchIntent: scored.searchIntent,
-        suggestedKeywords: scored.suggestedKeywords,
-        evergreenUpdateRecommended: scored.evergreen.recommended,
-        evergreenRecommendation: scored.evergreen.reason,
-        internalLinkSuggestions: scored.internalLinks,
-        knownFacts: scored.knownFacts,
-        uncertainties: scored.uncertainties,
-        communityQuestions: [],
-        suggestedHeadline: research.headlineSuggestion,
-        suggestedSummary: research.summary,
-        suggestedSeoTitle: research.seoTitleSuggestion,
-        suggestedMetaDescription: research.metaDescriptionSuggestion,
-        suggestedHook: scored.suggestedHook,
-        quickHitAngle: scored.quickHitAngle,
-        primaryVideoAngle: scored.primaryVideoAngle,
-        storyAngles: scored.angles,
-        visualAssetSuggestions: [],
-        mediaRightsStatus: scored.mediaRightsStatus,
-        isTest: false,
-      }).returning({ id: discoveryCandidates.id });
+      const eventKey = clusterEventKey(item.title) || item.contentHash.slice(0, 24);
+      const prepared = await (async () => {
+        try {
+          return await db.transaction(async (tx) => {
+            await tx.insert(storyClusters).values({
+              title: item.title,
+              normalizedEventKey: eventKey,
+              primaryEvent: research.summary,
+              primarySourceId: source.id,
+              verificationStatus: scored.verificationRecommendation,
+              confidenceScore: scored.confidenceScore,
+            }).onConflictDoNothing({ target: storyClusters.normalizedEventKey });
+            const [cluster] = await tx.select().from(storyClusters)
+              .where(eq(storyClusters.normalizedEventKey, eventKey))
+              .limit(1);
+            if (!cluster) throw new Error("Story cluster could not be prepared.");
+            const [candidate] = await tx.insert(discoveryCandidates).values({
+              clusterId: cluster.id,
+              sourceId: source.id,
+              title: item.title,
+              normalizedTitle: scored.normalizedTitle,
+              sourceUrl: item.url,
+              canonicalUrl,
+              sourceAuthor: item.author,
+              sourcePublishedAt: item.publishedAt ?? null,
+              excerpt: item.summary,
+              sourceHash: item.sourceHash,
+              contentHash: item.contentHash,
+              changeType: item.changeType,
+              status: duplicate.status === "LIKELY_DUPLICATE" ? "DUPLICATE" : "DISCOVERED",
+              duplicateStatus: duplicate.status,
+              verificationRecommendation: scored.verificationRecommendation,
+              confidenceScore: scored.confidenceScore,
+              newsworthinessScore: scored.newsworthinessScore,
+              seoOpportunityScore: scored.seoOpportunityScore,
+              trendScore: scored.trendScore,
+              contentOpportunityScore: scored.contentOpportunityScore,
+              quickHitScore: scored.quickHitScore,
+              primaryVideoScore: scored.primaryVideoScore,
+              primaryTopic: scored.primaryTopic,
+              secondaryTopics: scored.secondaryTopics,
+              searchIntent: scored.searchIntent,
+              suggestedKeywords: scored.suggestedKeywords,
+              evergreenUpdateRecommended: scored.evergreen.recommended,
+              evergreenRecommendation: scored.evergreen.reason,
+              internalLinkSuggestions: scored.internalLinks,
+              knownFacts: scored.knownFacts,
+              uncertainties: scored.uncertainties,
+              communityQuestions: [],
+              suggestedHeadline: research.headlineSuggestion,
+              suggestedSummary: research.summary,
+              suggestedSeoTitle: research.seoTitleSuggestion,
+              suggestedMetaDescription: research.metaDescriptionSuggestion,
+              suggestedHook: scored.suggestedHook,
+              quickHitAngle: scored.quickHitAngle,
+              primaryVideoAngle: scored.primaryVideoAngle,
+              storyAngles: scored.angles,
+              visualAssetSuggestions: [],
+              mediaRightsStatus: scored.mediaRightsStatus,
+              isTest: false,
+            }).onConflictDoNothing().returning({ id: discoveryCandidates.id });
+            return { cluster, candidate };
+          });
+        } catch (error) {
+          await releaseDailyCandidateSlot(usageDate);
+          throw error;
+        }
+      })();
+      const { cluster, candidate } = prepared;
+      if (!candidate) {
+        await releaseDailyCandidateSlot(usageDate);
+        duplicates += 1;
+        await db.insert(discoveryAuditLogs).values({
+          actorType: "AUTOMATION",
+          action: "CONCURRENT_CANDIDATE_DUPLICATE_SUPPRESSED",
+          reason: "A database uniqueness rule suppressed a duplicate candidate and released the reserved daily candidate slot.",
+          metadata: { sourceId: source.id, sourceUrl: canonicalUrl, contentHash: item.contentHash },
+        });
+        continue;
+      }
 
       await db.insert(candidateEvidence).values({
         candidateId: candidate.id,
@@ -571,6 +671,7 @@ export async function runDiscoverySource(
         warnings: result.warnings,
         assessments,
         candidateCreationAllowed: allowCandidateCreation,
+        candidateLimitSuppressions,
       },
     });
     await db.update(monitoredSources).set({
@@ -605,32 +706,46 @@ export async function runDiscoverySource(
         },
       });
     }
-    await db.insert(discoveryUsageDaily).values({
-      usageDate: nextUtcDate(),
-      requestCount: result.requestCount,
-      responseBytes: result.responseBytes,
-      candidatesCreated: created,
-    }).onConflictDoUpdate({
-      target: discoveryUsageDaily.usageDate,
-      set: {
-        requestCount: sql`${discoveryUsageDaily.requestCount} + ${result.requestCount}`,
-        responseBytes: sql`${discoveryUsageDaily.responseBytes} + ${result.responseBytes}`,
-        candidatesCreated: sql`${discoveryUsageDaily.candidatesCreated} + ${created}`,
-        updatedAt: persistedAt,
-      },
-    });
+    await recordResponseBytes(usageDate, result.responseBytes);
     return {
       status: result.health === "DEGRADED" ? "PARTIAL" as const : options.mode === "MANUAL_TEST" ? "MANUAL_TEST" as const : "SUCCESS" as const,
       result,
       candidates: scoredCandidates,
       created,
       duplicates,
+      candidateLimitSuppressions,
       assessments,
     };
   } catch (error) {
     if (options.mode === "TEST_ONLY") throw error;
     const completedAt = new Date();
-    const failures = source.consecutiveFailures + 1;
+    if (error instanceof DailyDiscoveryRequestLimitReached) {
+      const requestsReserved = requestBudget?.requestsReserved() ?? 0;
+      await db.insert(sourceFetchRuns).values({
+        sourceId: source.id,
+        status: "SKIPPED",
+        isTestRun: options.mode === "MANUAL_TEST",
+        startedAt,
+        completedAt,
+        requestCount: requestsReserved,
+        errorCode: "DAILY_REQUEST_LIMIT",
+        errorMessage: "The atomic daily discovery request limit stopped this connector without marking it failed.",
+        durationMs: Math.max(0, completedAt.valueOf() - startedAt.valueOf()),
+      });
+      await db.insert(discoveryAuditLogs).values({
+        actorType: "AUTOMATION",
+        action: "DAILY_REQUEST_LIMIT_REACHED",
+        reason: "The atomic UTC daily request budget stopped additional source requests. Connector health was not changed.",
+        metadata: { sourceId: source.id, usageDate, requestLimit, requestsReserved, publishing: false },
+      });
+      await ensureDiscoveryLimitAlert({
+        sourceId: source.id,
+        title: "Daily discovery request limit reached",
+        detail: `The ${requestLimit}-request UTC daily pilot limit stopped additional source requests without marking the connector failed.`,
+      });
+      return { status: "DAILY_RATE_LIMITED" as const, candidates: [], created: 0, duplicates: 0, assessments: [] };
+    }
+    const failure = connectorFailureState(source.consecutiveFailures, completedAt);
     const message = error instanceof Error ? error.message.slice(0, 2_000) : "Unknown connector failure.";
     await db.insert(sourceFetchRuns).values({
       sourceId: source.id,
@@ -638,18 +753,18 @@ export async function runDiscoverySource(
       isTestRun: options.mode === "MANUAL_TEST",
       startedAt,
       completedAt,
-      requestCount: 1,
+      requestCount: Math.max(1, requestBudget?.requestsReserved() ?? 0),
       errorCode: "CONNECTOR_FAILURE",
       errorMessage: message,
       durationMs: Math.max(0, completedAt.valueOf() - startedAt.valueOf()),
     });
     await db.update(monitoredSources).set({
-      healthStatus: failures >= 3 ? "CIRCUIT_OPEN" : "FAILED",
+      healthStatus: failure.healthStatus,
       lastCheckedAt: completedAt,
       lastFailureAt: completedAt,
       lastError: message,
-      consecutiveFailures: failures,
-      circuitOpenUntil: failures >= 3 ? new Date(completedAt.valueOf() + 6 * 3_600_000) : null,
+      consecutiveFailures: failure.consecutiveFailures,
+      circuitOpenUntil: failure.circuitOpenUntil,
     }).where(eq(monitoredSources.id, source.id));
     await db.insert(discoveryAuditLogs).values({
       actorType: "AUTOMATION",
@@ -661,7 +776,7 @@ export async function runDiscoverySource(
       await db.insert(discoveryAlerts).values({
         sourceId: source.id,
         alertType: "SOURCE_CONNECTOR_FAILURE",
-        priority: failures >= 3 ? 85 : 65,
+        priority: failure.consecutiveFailures >= CONNECTOR_FAILURE_THRESHOLD ? 85 : 65,
         title: `${source.name} connector needs attention`,
         detail: message,
       });
