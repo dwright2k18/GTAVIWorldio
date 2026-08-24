@@ -146,6 +146,21 @@ function forceHttps(value: string) {
   return canonicalizeSourceUrl(url.toString());
 }
 
+export function extractRockstarNewswireUrls(html: string, baseUrl: string) {
+  const values: string[] = [];
+  const decoded = decodeHtmlEntities(html).replaceAll("\\/", "/");
+  for (const match of decoded.matchAll(/(?:https:\/\/(?:www\.)?rockstargames\.com)?\/newswire\/article\/[a-z0-9/_-]+/gi)) {
+    try {
+      const canonical = forceHttps(canonicalizeSourceUrl(match[0], baseUrl));
+      const host = new URL(canonical).hostname.toLowerCase();
+      if (host === "rockstargames.com" || host === "www.rockstargames.com") values.push(canonical);
+    } catch {
+      // Malformed embedded URLs are ignored; no alternate host is followed.
+    }
+  }
+  return [...new Set(values)].sort();
+}
+
 export function parseHtmlArticle(
   html: string,
   source: DiscoverySource,
@@ -179,6 +194,8 @@ export function parseHtmlArticle(
   ].filter((value): value is string => Boolean(value)).slice(0, 5);
   const meaningful = [title, summary ?? "", publishedAt?.toISOString() ?? "", ...media].join("\n");
   const extractionMethod: ExtractionMethod = methodOverride ?? (structured ? "JSON_LD" : metaContent(html, "og:title") ? "OPEN_GRAPH" : "SSR_HTML");
+  const referencedOfficialUrls = extractRockstarNewswireUrls(html, finalUrl)
+    .filter((url) => url !== canonicalUrl);
   return {
     title,
     url: canonicalUrl,
@@ -195,6 +212,7 @@ export function parseHtmlArticle(
       extractionMethod,
       media,
       dateModified: structured?.dateModified ?? null,
+      referencedOfficialUrls,
     },
   };
 }
@@ -257,6 +275,7 @@ export class HtmlListingConnector implements SourceConnector {
     let responseBytes = response.responseBytes;
     const responseHashes = [response.responseHash];
     let lastHttpStatus = response.httpStatus;
+    let successfulResponses = 1;
 
     if (Boolean(config.clientRenderedListing) && listingItems.length === 0) {
       warnings.push("The public listing response did not contain server-rendered article links; configured public article metadata was used as a fallback.");
@@ -269,6 +288,7 @@ export class HtmlListingConnector implements SourceConnector {
           responseBytes += detail.responseBytes;
           responseHashes.push(detail.responseHash);
           lastHttpStatus = detail.httpStatus;
+          successfulResponses += 1;
           const method = configuredUrls.includes(detailUrl) && listingItems.length === 0 ? "KNOWN_ARTICLE_METADATA" as const : undefined;
           const item = parseHtmlArticle(detail.text, source, detail.finalUrl, method);
           if (item) detailItems.push(item);
@@ -291,6 +311,8 @@ export class HtmlListingConnector implements SourceConnector {
       responseBytes,
       responseHash: sha256(responseHashes.join("\n")),
       requestCount,
+      successfulResponses,
+      successfulExtractions: items.length,
       items,
       extractionMethod,
       extractionSucceeded,
@@ -306,6 +328,10 @@ export class HtmlListingConnector implements SourceConnector {
 export class HtmlChangeConnector implements SourceConnector {
   async fetch(source: DiscoverySource, fetcher?: DiscoveryFetcher): Promise<ConnectorResult> {
     const response = await fetchSourceText(source, fetcher, { accept: "HTML" });
+    const config = connectorConfig(source, {
+      discoverOfficialArticleLinks: false,
+      maxDetailItems: 3,
+    });
     const parsed = parseHtmlArticle(response.text, source, response.finalUrl);
     const normalizedText = normalizeMeaningfulText(response.text).slice(0, 100_000);
     const canonicalUrl = canonicalFromHtml(response.text, response.finalUrl);
@@ -320,20 +346,61 @@ export class HtmlChangeConnector implements SourceConnector {
       directEvidence: source.isFirstParty,
       metadata: { connector: "HTML_CHANGE", extractionMethod: "SSR_HTML", normalizedCharacterCount: normalizedText.length },
     };
+    const discoveredOfficialUrls = extractRockstarNewswireUrls(response.text, response.finalUrl);
+    const detailItems: ConnectorItem[] = [];
+    const unresolvedOfficialUrls: string[] = [];
+    const warnings: string[] = [];
+    let requestCount = response.requestCount;
+    let responseBytes = response.responseBytes;
+    const responseHashes = [response.responseHash];
+    let lastHttpStatus = response.httpStatus;
+    let successfulResponses = 1;
+    if (Boolean(config.discoverOfficialArticleLinks) && source.domain === "rockstargames.com") {
+      const maximumDetails = typeof config.maxDetailItems === "number"
+        ? Math.max(1, Math.min(5, Math.floor(config.maxDetailItems)))
+        : 3;
+      for (const detailUrl of discoveredOfficialUrls.slice(0, maximumDetails)) {
+        if (canonicalizeSourceUrl(detailUrl) === canonicalizeSourceUrl(item.canonicalUrl ?? item.url)) continue;
+        try {
+          const detail = await fetchSourceText(source, fetcher, { url: detailUrl, accept: "HTML" });
+          requestCount += detail.requestCount;
+          responseBytes += detail.responseBytes;
+          responseHashes.push(detail.responseHash);
+          lastHttpStatus = detail.httpStatus;
+          successfulResponses += 1;
+          const parsedDetail = parseHtmlArticle(detail.text, source, detail.finalUrl);
+          if (parsedDetail) detailItems.push(parsedDetail);
+          else unresolvedOfficialUrls.push(detailUrl);
+        } catch (error) {
+          unresolvedOfficialUrls.push(detailUrl);
+          warnings.push(error instanceof Error ? error.message : "An official Rockstar reference could not be resolved.");
+        }
+      }
+    }
+    item.metadata = {
+      ...item.metadata,
+      referencedOfficialUrls: discoveredOfficialUrls,
+      unresolvedOfficialUrls,
+    };
     const extractionSucceeded = normalizedText.length >= 25;
+    const items = extractionSucceeded ? [item, ...detailItems] : [];
     return {
       sourceUrl: response.finalUrl,
       fetchedAt: new Date(),
-      httpStatus: response.httpStatus,
-      responseBytes: response.responseBytes,
-      responseHash: response.responseHash,
-      requestCount: response.requestCount,
-      items: extractionSucceeded ? [item] : [],
+      httpStatus: lastHttpStatus,
+      responseBytes,
+      responseHash: sha256(responseHashes.join("\n")),
+      requestCount,
+      successfulResponses,
+      successfulExtractions: items.length,
+      items,
       extractionMethod: (item.metadata.extractionMethod as ExtractionMethod | undefined) ?? "SSR_HTML",
       extractionSucceeded,
-      health: extractionSucceeded ? "HEALTHY" : "FAILED",
+      health: extractionSucceeded ? unresolvedOfficialUrls.length ? "DEGRADED" : "HEALTHY" : "FAILED",
       lastContentHash: extractionSucceeded ? item.contentHash : undefined,
-      warnings: extractionSucceeded ? [] : ["The public page did not expose enough stable text or metadata to monitor safely."],
+      warnings: extractionSucceeded
+        ? warnings
+        : ["The public page did not expose enough stable text or metadata to monitor safely."],
     };
   }
 }

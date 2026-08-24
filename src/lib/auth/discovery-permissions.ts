@@ -10,7 +10,8 @@ export type DiscoveryAction =
   | "MERGE"
   | "ADD_EVIDENCE"
   | "MANAGE_SOURCES"
-  | "MANAGE_SETTINGS";
+  | "MANAGE_SETTINGS"
+  | "OVERRIDE_SCORE";
 
 export function discoveryPermissionDenial(
   role: EditorRole,

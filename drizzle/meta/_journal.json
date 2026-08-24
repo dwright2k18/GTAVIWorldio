@@ -43,6 +43,13 @@
       "when": 1787353000000,
       "tag": "0005_phase_4_1_source_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787354000000,
+      "tag": "0006_phase_4_2_discovery_scoring",
+      "breakpoints": true
     }
   ]
 }

@@ -186,6 +186,17 @@ export const discoveryAlertTypeEnum = pgEnum("discovery_alert_type", [
   "EVERGREEN_PAGE_NEEDS_UPDATE",
   "SOURCE_CONNECTOR_FAILURE",
   "COST_LIMIT_WARNING",
+  "OFFICIAL_SOURCE_GAP",
+]);
+
+export const discoveryScoreMetricEnum = pgEnum("discovery_score_metric", [
+  "SOURCE_AUTHORITY",
+  "CONFIDENCE",
+  "NEWSWORTHINESS",
+  "SEO_OPPORTUNITY",
+  "TREND",
+  "QUICK_HIT",
+  "PRIMARY_VIDEO",
 ]);
 
 export const discoveryAlertStatusEnum = pgEnum("discovery_alert_status", [
@@ -809,6 +820,8 @@ export const monitoredSources = pgTable(
       .notNull()
       .default(30),
     termsPolicyNotes: text("terms_policy_notes"),
+    coverageGroup: text("coverage_group"),
+    signalLabel: text("signal_label"),
     createdBy: uuid("created_by").references(() => editorProfiles.id, {
       onDelete: "set null",
     }),
@@ -849,6 +862,12 @@ export const sourceFetchRuns = pgTable(
     itemsSeen: integer("items_seen").notNull().default(0),
     candidatesCreated: integer("candidates_created").notNull().default(0),
     duplicatesSkipped: integer("duplicates_skipped").notNull().default(0),
+    durationMs: integer("duration_ms").notNull().default(0),
+    successfulResponses: integer("successful_responses").notNull().default(0),
+    successfulExtractions: integer("successful_extractions").notNull().default(0),
+    newUrls: integer("new_urls").notNull().default(0),
+    knownUrls: integer("known_urls").notNull().default(0),
+    evidenceAttached: integer("evidence_attached").notNull().default(0),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
     estimatedCostMicros: integer("estimated_cost_micros").notNull().default(0),
@@ -1118,6 +1137,70 @@ export const candidateEvidence = pgTable(
   ],
 );
 
+export const discoveryScoreRuns = pgTable(
+  "discovery_score_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    scoringVersion: text("scoring_version").notNull(),
+    inputHash: text("input_hash").notNull(),
+    sourceAuthorityScore: integer("source_authority_score").notNull(),
+    confidenceScore: integer("confidence_score").notNull(),
+    newsworthinessScore: integer("newsworthiness_score").notNull(),
+    seoOpportunityScore: integer("seo_opportunity_score").notNull(),
+    trendScore: integer("trend_score").notNull(),
+    quickHitScore: integer("quick_hit_score").notNull(),
+    primaryVideoScore: integer("primary_video_score").notNull(),
+    componentBreakdown: jsonb("component_breakdown")
+      .$type<Record<string, Array<{ key: string; label: string; value: number; reason: string }>>>()
+      .notNull(),
+    inputSnapshot: jsonb("input_snapshot")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    scoredAt: timestamp("scored_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    isTest: boolean("is_test").notNull().default(false),
+  },
+  (table) => [
+    uniqueIndex("discovery_score_runs_candidate_version_hash_uidx").on(
+      table.candidateId,
+      table.scoringVersion,
+      table.inputHash,
+    ),
+    index("discovery_score_runs_candidate_date_idx").on(table.candidateId, table.scoredAt),
+  ],
+);
+
+export const discoveryScoreOverrides = pgTable(
+  "discovery_score_overrides",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    scoreRunId: uuid("score_run_id")
+      .notNull()
+      .references(() => discoveryScoreRuns.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    metric: discoveryScoreMetricEnum("metric").notNull(),
+    originalScore: integer("original_score").notNull(),
+    overrideScore: integer("override_score").notNull(),
+    editorId: uuid("editor_id")
+      .notNull()
+      .references(() => editorProfiles.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("discovery_score_overrides_candidate_date_idx").on(table.candidateId, table.createdAt),
+    index("discovery_score_overrides_run_idx").on(table.scoreRunId),
+  ],
+);
+
 export const discoveryAlerts = pgTable(
   "discovery_alerts",
   {
@@ -1247,3 +1330,4 @@ export type EditorProfile = typeof editorProfiles.$inferSelect;
 export type MonitoredSource = typeof monitoredSources.$inferSelect;
 export type DiscoveryCandidate = typeof discoveryCandidates.$inferSelect;
 export type StoryCluster = typeof storyClusters.$inferSelect;
+export type DiscoveryScoreRun = typeof discoveryScoreRuns.$inferSelect;

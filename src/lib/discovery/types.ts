@@ -46,6 +46,8 @@ export type ConnectorResult = {
   responseBytes: number;
   responseHash: string;
   requestCount: number;
+  successfulResponses?: number;
+  successfulExtractions?: number;
   items: ConnectorItem[];
   extractionMethod: ExtractionMethod;
   extractionSucceeded: boolean;
@@ -73,16 +75,42 @@ export type DiscoverySource = Pick<
 
 export type DiscoverySignals = {
   independentSourceCount?: number;
+  contradictoryClaims?: number;
   publicationMentions?: number;
   communityMentions?: number;
   repeatedQuestions?: number;
+  searchTrendIndex?: number;
   isNovel?: boolean;
+  evidenceComplete?: boolean;
+  referenceTime?: Date;
   existingEvergreenPaths?: string[];
 };
+
+export type ScoreMetric =
+  | "SOURCE_AUTHORITY"
+  | "CONFIDENCE"
+  | "NEWSWORTHINESS"
+  | "SEO_OPPORTUNITY"
+  | "TREND"
+  | "QUICK_HIT"
+  | "PRIMARY_VIDEO";
+
+export type ScoreComponent = {
+  key: string;
+  label: string;
+  value: number;
+  reason: string;
+};
+
+export type ScoreBreakdowns = Record<ScoreMetric, ScoreComponent[]>;
 
 export type ScoredCandidate = {
   item: ConnectorItem;
   normalizedTitle: string;
+  scoringVersion: string;
+  inputHash: string;
+  sourceAuthorityScore: number;
+  scoreBreakdowns: ScoreBreakdowns;
   verificationRecommendation: VerificationRecommendation;
   confidenceScore: number;
   newsworthinessScore: number;

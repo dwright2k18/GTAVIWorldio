@@ -11,6 +11,8 @@ import {
   discoveryAlerts,
   discoveryAuditLogs,
   discoveryCandidates,
+  discoveryScoreOverrides,
+  discoveryScoreRuns,
   monitoredSources,
   sources,
   stories,
@@ -107,6 +109,58 @@ export async function updateCandidateVerification(formData: FormData) {
     metadata: { verificationRecommendation: input.verificationRecommendation, confidenceScore: input.confidenceScore },
   });
   revalidatePath(`/admin/discovery/${id}`);
+}
+
+export async function overrideCandidateScore(formData: FormData) {
+  const editor = await requireEditorAction(editorRoles);
+  const input = z.object({
+    candidateId: z.uuid(),
+    scoreRunId: z.uuid(),
+    metric: z.enum(["SOURCE_AUTHORITY", "CONFIDENCE", "NEWSWORTHINESS", "SEO_OPPORTUNITY", "TREND", "QUICK_HIT", "PRIMARY_VIDEO"]),
+    overrideScore: z.coerce.number().int().min(0).max(100),
+    reason: z.string().trim().min(12).max(2_000),
+  }).parse(Object.fromEntries(formData.entries()));
+  await loadCandidate(input.candidateId);
+  const [scoreRun] = await db.select().from(discoveryScoreRuns)
+    .where(eq(discoveryScoreRuns.id, input.scoreRunId))
+    .limit(1);
+  if (!scoreRun || scoreRun.candidateId !== input.candidateId) throw new Error("The selected automated score run does not belong to this candidate.");
+  const originalScores = {
+    SOURCE_AUTHORITY: scoreRun.sourceAuthorityScore,
+    CONFIDENCE: scoreRun.confidenceScore,
+    NEWSWORTHINESS: scoreRun.newsworthinessScore,
+    SEO_OPPORTUNITY: scoreRun.seoOpportunityScore,
+    TREND: scoreRun.trendScore,
+    QUICK_HIT: scoreRun.quickHitScore,
+    PRIMARY_VIDEO: scoreRun.primaryVideoScore,
+  } as const;
+  const originalScore = originalScores[input.metric];
+  await db.transaction(async (tx) => {
+    await tx.insert(discoveryScoreOverrides).values({
+      scoreRunId: scoreRun.id,
+      candidateId: input.candidateId,
+      metric: input.metric,
+      originalScore,
+      overrideScore: input.overrideScore,
+      editorId: editor.id,
+      reason: input.reason,
+    });
+    await tx.insert(discoveryAuditLogs).values({
+      candidateId: input.candidateId,
+      actorId: editor.id,
+      actorType: "MANUAL",
+      action: "DISCOVERY_SCORE_OVERRIDDEN",
+      reason: input.reason,
+      metadata: {
+        scoreRunId: scoreRun.id,
+        metric: input.metric,
+        originalScore,
+        overrideScore: input.overrideScore,
+        automatedScorePreserved: true,
+      },
+    });
+  });
+  revalidatePath(`/admin/discovery/${input.candidateId}`);
 }
 
 export async function addCandidateEvidence(formData: FormData) {
