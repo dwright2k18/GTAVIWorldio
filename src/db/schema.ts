@@ -789,6 +789,14 @@ export const monitoredSources = pgTable(
     lastSuccessfulFetchAt: timestamp("last_successful_fetch_at", {
       withTimezone: true,
     }),
+    lastSuccessfulExtractionAt: timestamp("last_successful_extraction_at", {
+      withTimezone: true,
+    }),
+    lastDiscoveredItemAt: timestamp("last_discovered_item_at", {
+      withTimezone: true,
+    }),
+    lastExtractionMethod: text("last_extraction_method"),
+    lastContentHash: text("last_content_hash"),
     lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
     consecutiveFailures: integer("consecutive_failures").notNull().default(0),
     lastHttpStatus: integer("last_http_status"),

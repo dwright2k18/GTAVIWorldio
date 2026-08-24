@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, count, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -26,7 +26,7 @@ import { scoreCandidate } from "./scoring";
 import type { DiscoverySource } from "./types";
 import { recurringDiscoveryEnabled } from "./pipeline";
 
-type IngestionMode = "TEST_ONLY" | "RECURRING";
+type IngestionMode = "TEST_ONLY" | "MANUAL_TEST" | "RECURRING";
 
 function asDiscoverySource(source: typeof monitoredSources.$inferSelect): DiscoverySource {
   return source;
@@ -38,7 +38,7 @@ function nextUtcDate() {
 
 export async function runDiscoverySource(
   sourceId: string,
-  options: { mode: IngestionMode; fetcher?: DiscoveryFetcher },
+  options: { mode: IngestionMode; fetcher?: DiscoveryFetcher; allowCandidateCreation?: boolean },
 ) {
   const [source] = await db.select().from(monitoredSources).where(eq(monitoredSources.id, sourceId)).limit(1);
   if (!source) throw new Error("Monitored source not found.");
@@ -60,10 +60,21 @@ export async function runDiscoverySource(
       });
       return { status: "CIRCUIT_OPEN" as const, candidates: [] };
     }
+    if (source.nextCheckAt && source.nextCheckAt > new Date()) {
+      await db.insert(sourceFetchRuns).values({
+        sourceId: source.id,
+        status: "SKIPPED",
+        requestCount: 0,
+        completedAt: new Date(),
+        errorCode: "MINIMUM_INTERVAL",
+        errorMessage: "The configured minimum check interval has not elapsed.",
+      });
+      return { status: "MINIMUM_INTERVAL" as const, candidates: [] };
+    }
 
     const oneHourAgo = new Date(Date.now() - 3_600_000);
     const [recent] = await db
-      .select({ total: count() })
+      .select({ total: sql<number>`coalesce(sum(${sourceFetchRuns.requestCount}), 0)` })
       .from(sourceFetchRuns)
       .where(and(eq(sourceFetchRuns.sourceId, source.id), gte(sourceFetchRuns.startedAt, oneHourAgo)));
     if (Number(recent.total) >= source.rateLimitPerHour) {
@@ -102,15 +113,64 @@ export async function runDiscoverySource(
     const candidateLimit = settings?.maxCandidatesPerRun ?? 20;
     const scoredCandidates = result.items.slice(0, candidateLimit).map((item) => {
       const scored = scoreCandidate(asDiscoverySource(source), item);
-      return { scored, research: buildSafeResearchPacket(scored), isTest: options.mode === "TEST_ONLY" };
+      return { scored, research: buildSafeResearchPacket(scored), isTest: options.mode !== "RECURRING" };
     });
     if (options.mode === "TEST_ONLY") {
       return { status: "TEST_ONLY" as const, result, candidates: scoredCandidates };
     }
 
+    const completedAt = new Date();
+    if (!result.extractionSucceeded || result.health === "FAILED") {
+      const failures = source.consecutiveFailures + 1;
+      const message = result.warnings.join(" ").slice(0, 2_000) || "The connector could not extract required public source data.";
+      await db.insert(sourceFetchRuns).values({
+        sourceId: source.id,
+        status: "FAILED",
+        isTestRun: options.mode === "MANUAL_TEST",
+        startedAt,
+        completedAt,
+        httpStatus: result.httpStatus,
+        requestCount: result.requestCount,
+        responseBytes: result.responseBytes,
+        itemsSeen: result.items.length,
+        errorCode: "EXTRACTION_FAILED",
+        errorMessage: message,
+        metadata: { extractionMethod: result.extractionMethod, warnings: result.warnings },
+      });
+      await db.update(monitoredSources).set({
+        healthStatus: failures >= 3 ? "CIRCUIT_OPEN" : "FAILED",
+        lastCheckedAt: completedAt,
+        lastSuccessfulFetchAt: completedAt,
+        lastFailureAt: completedAt,
+        lastHttpStatus: result.httpStatus,
+        lastExtractionMethod: result.extractionMethod,
+        lastContentHash: result.lastContentHash ?? result.responseHash,
+        lastError: message,
+        consecutiveFailures: failures,
+        circuitOpenUntil: failures >= 3 ? new Date(completedAt.valueOf() + 6 * 3_600_000) : null,
+      }).where(eq(monitoredSources.id, source.id));
+      await db.insert(discoveryAuditLogs).values({
+        actorType: "AUTOMATION",
+        action: options.mode === "MANUAL_TEST" ? "MANUAL_SOURCE_TEST_FAILED" : "SOURCE_EXTRACTION_FAILED",
+        reason: "The public endpoint was reachable, but required relevant data could not be extracted. No candidate was created.",
+        metadata: { sourceId: source.id, extractionMethod: result.extractionMethod, warnings: result.warnings },
+      });
+      if (source.authorityTier === "TIER_1") {
+        await db.insert(discoveryAlerts).values({
+          sourceId: source.id,
+          alertType: "SOURCE_CONNECTOR_FAILURE",
+          priority: failures >= 3 ? 85 : 65,
+          title: `${source.name} connector needs attention`,
+          detail: message,
+        });
+      }
+      return { status: "FAILED" as const, result, candidates: scoredCandidates, created: 0, duplicates: 0, assessments: [] };
+    }
+
     const existingFingerprints = await db
       .select({
         id: discoveryCandidates.id,
+        sourceId: discoveryCandidates.sourceId,
         canonicalUrl: discoveryCandidates.canonicalUrl,
         normalizedTitle: discoveryCandidates.normalizedTitle,
         contentHash: discoveryCandidates.contentHash,
@@ -136,6 +196,8 @@ export async function runDiscoverySource(
     const isInitialBaseline = priorSnapshotHashes.size === 0;
     let created = 0;
     let duplicates = 0;
+    const assessments: Array<{ title: string; status: string; reason: string; matchingCandidateId?: string }> = [];
+    const allowCandidateCreation = options.mode === "RECURRING" || options.allowCandidateCreation === true;
 
     for (const { scored, research } of scoredCandidates) {
       const item = scored.item;
@@ -155,20 +217,74 @@ export async function runDiscoverySource(
         metadata: item.metadata,
       }).onConflictDoNothing({ target: [sourceSnapshots.sourceId, sourceSnapshots.contentHash] });
 
-      if (!shouldCreateCandidateForSnapshot({
-        connectorKind: source.connectorKind,
-        isInitialBaseline,
-        wasPreviouslySeen,
-      })) continue;
-
       const duplicate = assessDuplicate({
         canonicalUrl,
         title: item.title,
         contentHash: item.contentHash,
         publishedAt: item.publishedAt,
       }, existingFingerprints);
-      if (duplicate.status === "DUPLICATE") {
+      assessments.push({
+        title: item.title,
+        status: duplicate.status,
+        reason: duplicate.reason,
+        matchingCandidateId: duplicate.matchingCandidateId?.startsWith("run:") ? undefined : duplicate.matchingCandidateId,
+      });
+      if (duplicate.status !== "NEW_STORY" && duplicate.matchingCandidateId) {
         duplicates += 1;
+        if (duplicate.matchingCandidateId.startsWith("run:")) {
+          await db.insert(discoveryAuditLogs).values({
+            actorType: "AUTOMATION",
+            action: "SAME_RUN_ITEM_CLUSTERED",
+            reason: "A second source item represented the same event already seen in this connector run. No candidate was created.",
+            metadata: { sourceId: source.id, sourceUrl: canonicalUrl, duplicateStatus: duplicate.status, similarity: duplicate.similarity },
+          });
+          continue;
+        }
+        const matching = existingFingerprints.find(({ id }) => id === duplicate.matchingCandidateId);
+        const attachedEvidence = await db.insert(candidateEvidence).values({
+          candidateId: duplicate.matchingCandidateId,
+          sourceId: source.id,
+          sourceUrl: canonicalUrl,
+          title: item.title,
+          author: item.author,
+          publishedAt: item.publishedAt,
+          authorityTier: source.authorityTier,
+          authorityScore: source.reliabilityScore,
+          isPrimary: matching?.sourceId === source.id,
+          isCorroborating: matching?.sourceId !== source.id,
+          extractedFacts: scored.knownFacts.map(({ fact }) => fact),
+          verificationNotes: `${duplicate.status}: ${duplicate.reason}`,
+          rightsNotes: scored.mediaRightsStatus,
+        }).onConflictDoNothing({ target: [candidateEvidence.candidateId, candidateEvidence.sourceUrl] })
+          .returning({ id: candidateEvidence.id });
+        if (attachedEvidence.length) {
+          await db.update(discoveryCandidates).set({ lastUpdatedAt: new Date(), updatedAt: new Date() })
+            .where(eq(discoveryCandidates.id, duplicate.matchingCandidateId));
+          await db.insert(discoveryAuditLogs).values({
+            candidateId: duplicate.matchingCandidateId,
+            actorType: "AUTOMATION",
+            action: "SOURCE_EVIDENCE_MATCHED",
+            reason: "A source item matched an existing candidate, so evidence was attached without creating a duplicate candidate.",
+            metadata: { sourceId: source.id, duplicateStatus: duplicate.status, similarity: duplicate.similarity },
+          });
+        }
+        continue;
+      }
+
+      const shouldCreate = shouldCreateCandidateForSnapshot({
+        connectorKind: source.connectorKind,
+        isInitialBaseline,
+        wasPreviouslySeen,
+      });
+      if (!shouldCreate || !allowCandidateCreation) {
+        existingFingerprints.push({
+          id: `run:${item.contentHash}`,
+          sourceId: source.id,
+          canonicalUrl,
+          normalizedTitle: scored.normalizedTitle,
+          contentHash: item.contentHash,
+          sourcePublishedAt: item.publishedAt ?? null,
+        });
         continue;
       }
 
@@ -276,6 +392,7 @@ export async function runDiscoverySource(
       created += 1;
       existingFingerprints.push({
         id: candidate.id,
+        sourceId: source.id,
         canonicalUrl,
         normalizedTitle: scored.normalizedTitle,
         contentHash: item.contentHash,
@@ -283,30 +400,56 @@ export async function runDiscoverySource(
       });
     }
 
-    const completedAt = new Date();
+    const persistedAt = new Date();
     await db.insert(sourceFetchRuns).values({
       sourceId: source.id,
-      status: "SUCCESS",
+      status: result.health === "DEGRADED" ? "PARTIAL" : options.mode === "MANUAL_TEST" ? "TEST_ONLY" : "SUCCESS",
+      isTestRun: options.mode === "MANUAL_TEST",
       startedAt,
-      completedAt,
+      completedAt: persistedAt,
       httpStatus: result.httpStatus,
       requestCount: result.requestCount,
       responseBytes: result.responseBytes,
       itemsSeen: result.items.length,
       candidatesCreated: created,
       duplicatesSkipped: duplicates,
-      metadata: { warnings: result.warnings },
+      metadata: {
+        extractionMethod: result.extractionMethod,
+        health: result.health,
+        warnings: result.warnings,
+        assessments,
+        candidateCreationAllowed: allowCandidateCreation,
+      },
     });
     await db.update(monitoredSources).set({
-      healthStatus: "HEALTHY",
-      lastCheckedAt: completedAt,
-      lastSuccessfulFetchAt: completedAt,
+      healthStatus: result.health,
+      lastCheckedAt: persistedAt,
+      lastSuccessfulFetchAt: persistedAt,
+      lastSuccessfulExtractionAt: persistedAt,
+      lastDiscoveredItemAt: result.items.length ? persistedAt : source.lastDiscoveredItemAt,
+      lastExtractionMethod: result.extractionMethod,
+      lastContentHash: result.lastContentHash ?? result.responseHash,
       lastHttpStatus: result.httpStatus,
-      lastError: null,
+      lastError: result.health === "DEGRADED" ? result.warnings.join(" ").slice(0, 2_000) : null,
       consecutiveFailures: 0,
       circuitOpenUntil: null,
-      nextCheckAt: new Date(completedAt.valueOf() + source.minCheckIntervalMinutes * 60_000),
+      nextCheckAt: new Date(persistedAt.valueOf() + source.minCheckIntervalMinutes * 60_000),
     }).where(eq(monitoredSources.id, source.id));
+    if (options.mode === "MANUAL_TEST") {
+      await db.insert(discoveryAuditLogs).values({
+        actorType: "AUTOMATION",
+        action: "MANUAL_SOURCE_TEST_COMPLETED",
+        reason: "An explicitly authorized one-time connector test completed with recurring monitoring disabled.",
+        metadata: {
+          sourceId: source.id,
+          health: result.health,
+          extractionMethod: result.extractionMethod,
+          itemsSeen: result.items.length,
+          candidatesCreated: created,
+          duplicatesSkipped: duplicates,
+        },
+      });
+    }
     await db.insert(discoveryUsageDaily).values({
       usageDate: nextUtcDate(),
       requestCount: result.requestCount,
@@ -318,10 +461,17 @@ export async function runDiscoverySource(
         requestCount: sql`${discoveryUsageDaily.requestCount} + ${result.requestCount}`,
         responseBytes: sql`${discoveryUsageDaily.responseBytes} + ${result.responseBytes}`,
         candidatesCreated: sql`${discoveryUsageDaily.candidatesCreated} + ${created}`,
-        updatedAt: completedAt,
+        updatedAt: persistedAt,
       },
     });
-    return { status: "SUCCESS" as const, result, candidates: scoredCandidates, created, duplicates };
+    return {
+      status: result.health === "DEGRADED" ? "PARTIAL" as const : options.mode === "MANUAL_TEST" ? "MANUAL_TEST" as const : "SUCCESS" as const,
+      result,
+      candidates: scoredCandidates,
+      created,
+      duplicates,
+      assessments,
+    };
   } catch (error) {
     if (options.mode === "TEST_ONLY") throw error;
     const completedAt = new Date();
@@ -330,6 +480,7 @@ export async function runDiscoverySource(
     await db.insert(sourceFetchRuns).values({
       sourceId: source.id,
       status: "FAILED",
+      isTestRun: options.mode === "MANUAL_TEST",
       startedAt,
       completedAt,
       requestCount: 1,
@@ -337,14 +488,20 @@ export async function runDiscoverySource(
       errorMessage: message,
     });
     await db.update(monitoredSources).set({
-      healthStatus: failures >= 3 ? "CIRCUIT_OPEN" : "DEGRADED",
+      healthStatus: failures >= 3 ? "CIRCUIT_OPEN" : "FAILED",
       lastCheckedAt: completedAt,
       lastFailureAt: completedAt,
       lastError: message,
       consecutiveFailures: failures,
       circuitOpenUntil: failures >= 3 ? new Date(completedAt.valueOf() + 6 * 3_600_000) : null,
     }).where(eq(monitoredSources.id, source.id));
-    if (source.authorityTier === "TIER_1" && failures >= 2) {
+    await db.insert(discoveryAuditLogs).values({
+      actorType: "AUTOMATION",
+      action: options.mode === "MANUAL_TEST" ? "MANUAL_SOURCE_TEST_FAILED" : "SOURCE_CONNECTOR_FAILED",
+      reason: "The connector request failed. No candidate or story was created.",
+      metadata: { sourceId: source.id, error: message },
+    });
+    if (source.authorityTier === "TIER_1") {
       await db.insert(discoveryAlerts).values({
         sourceId: source.id,
         alertType: "SOURCE_CONNECTOR_FAILURE",

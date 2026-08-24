@@ -43,9 +43,19 @@ export default async function DiscoverySourcesPage() {
       {canManage ? <section className="mt-8 rounded-3xl border border-white/10 bg-white/[0.035] p-5 sm:p-7"><h2 className="mb-5 text-xl font-black">Add source</h2><SourceForm /></section> : <p className="mt-8 rounded-2xl border border-white/10 p-5 text-sm text-slate-300">Source settings are read-only for editors. Owners and administrators manage the registry.</p>}
       <div className="mt-8 space-y-4">
         {rows.map((source) => (
-          <details className="rounded-2xl border border-white/10 bg-white/[0.03] p-5" key={source.id}>
+          <details className={`rounded-2xl border bg-white/[0.03] p-5 ${source.authorityTier === "TIER_1" && source.healthStatus !== "HEALTHY" ? "border-amber-300/40" : "border-white/10"}`} key={source.id}>
             <summary className="cursor-pointer font-black">{source.name} <span className="ml-2 text-sm font-normal text-slate-400">{source.authorityTier.replace("_", " ")} · {source.healthStatus.replaceAll("_", " ")} · {source.isActive ? "eligible" : "inactive"}</span></summary>
-            <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-400"><span>{source.domain}</span><span>{source.connectorKind.replaceAll("_", " ")}</span><span>Reliability {source.reliabilityScore}/100</span><span>{source.lastRun ? `Last test ${source.lastRun.startedAt.toLocaleString("en-US")}` : "Never fetched"}</span></div>
+            {source.authorityTier === "TIER_1" && source.healthStatus !== "HEALTHY" ? <p className="mt-3 rounded-xl border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-sm font-bold text-amber-100">Official-source coverage needs attention: {source.lastError ?? "A successful extraction has not yet been recorded."}</p> : null}
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-400">
+              <span>{source.domain}</span>
+              <span>{source.connectorKind.replaceAll("_", " ")}</span>
+              <span>Reliability {source.reliabilityScore}/100</span>
+              <span>{source.lastRun ? `Last test ${source.lastRun.startedAt.toLocaleString("en-US")}` : "Never fetched"}</span>
+              <span>{source.lastExtractionMethod ? `Method ${source.lastExtractionMethod.replaceAll("_", " ")}` : "No extraction method recorded"}</span>
+              <span>{source.lastSuccessfulExtractionAt ? `Last extraction ${source.lastSuccessfulExtractionAt.toLocaleString("en-US")}` : "No successful extraction"}</span>
+              <span>{source.lastDiscoveredItemAt ? `Last item ${source.lastDiscoveredItemAt.toLocaleString("en-US")}` : "No relevant item recorded"}</span>
+              <span>{source.lastContentHash ? `Hash ${source.lastContentHash.slice(0, 12)}…` : "No content hash"}</span>
+            </div>
             {canManage ? <div className="mt-6"><SourceForm source={source} /></div> : null}
           </details>
         ))}

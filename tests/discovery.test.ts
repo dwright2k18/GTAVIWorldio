@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { classifyMeaningfulChange, meaningfulContentHash } from "@/lib/discovery/change-detection";
 import { shouldCreateCandidateForSnapshot } from "@/lib/discovery/baseline";
 import { parseFeedItems } from "@/lib/discovery/connectors/feeds";
-import { parseHtmlListing } from "@/lib/discovery/connectors/html";
+import { HtmlListingConnector, parseHtmlArticle, parseHtmlListing } from "@/lib/discovery/connectors/html";
 import { fetchSourceText } from "@/lib/discovery/connectors/base";
 import { canUseDeepResearch, estimatedMonthlyRequests } from "@/lib/discovery/cost";
 import { assessDuplicate, clusterEventKey } from "@/lib/discovery/deduplication";
@@ -58,17 +58,84 @@ describe("discovery normalization", () => {
 
 describe("source connectors", () => {
   it("parses RSS metadata without retaining full articles", () => {
-    const xml = `<rss><channel><item><title>GTA VI update</title><link>https://example.com/story?utm_source=rss</link><description>Short sourced summary.</description><pubDate>Wed, 20 Aug 2026 12:00:00 GMT</pubDate></item></channel></rss>`;
+    const xml = `<rss><channel><item><title>GTA VI update</title><link>https://www.rockstargames.com/story?utm_source=rss</link><description>Short sourced summary.</description><pubDate>Wed, 20 Aug 2026 12:00:00 GMT</pubDate></item></channel></rss>`;
     const parsed = parseFeedItems(xml, officialSource, officialSource.url);
     expect(parsed).toHaveLength(1);
-    expect(parsed[0].canonicalUrl).toBe("https://example.com/story");
+    expect(parsed[0].canonicalUrl).toBe("https://www.rockstargames.com/story");
     expect(parsed[0].summary).toBe("Short sourced summary.");
+  });
+
+  it("extracts official Atom media descriptions and stable video metadata", () => {
+    const youtube = {
+      ...officialSource,
+      url: "https://www.youtube.com/feeds/videos.xml?channel_id=official",
+      domain: "youtube.com",
+      connectorKind: "ATOM" as const,
+    };
+    const xml = `<feed><entry><yt:videoId>abc123</yt:videoId><title>Grand Theft Auto VI: An Extended Look Coming August 27</title><link href="https://www.youtube.com/watch?v=abc123"/><published>2026-08-06T12:00:25Z</published><media:group><media:description>Grand Theft Auto VI: An Extended Look will premiere on August 27.</media:description><media:thumbnail url="https://i.ytimg.com/vi/abc123/hqdefault.jpg"/></media:group></entry></feed>`;
+    const parsed = parseFeedItems(xml, youtube, youtube.url);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].summary).toContain("premiere on August 27");
+    expect(parsed[0].metadata).toMatchObject({ extractionMethod: "OFFICIAL_VIDEO_FEED", videoId: "abc123" });
   });
 
   it("limits HTML listing extraction to configured paths", () => {
     const html = `<a href="/newswire/article/allowed">Official GTA VI update</a><a href="/support/private">Ignore this support link</a>`;
     const parsed = parseHtmlListing(html, officialSource, officialSource.url);
     expect(parsed.map((entry) => entry.title)).toEqual(["Official GTA VI update"]);
+  });
+
+  it("prefers JSON-LD and public article metadata over generic page copy", () => {
+    const html = `<html><head><meta property="og:image" content="https://example.com/approved.jpg"><script type="application/ld+json">{"@type":"NewsArticle","headline":"Grand Theft Auto VI pre-orders open","description":"Rockstar Games confirms public pre-orders for Grand Theft Auto VI.","datePublished":"2026-06-24T10:00:00Z","author":{"name":"Rockstar Games"},"url":"https://www.rockstargames.com/newswire/article/preorders"}</script></head></html>`;
+    const parsed = parseHtmlArticle(html, officialSource, officialSource.url);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.publishedAt?.toISOString()).toBe("2026-06-24T10:00:00.000Z");
+    expect(parsed?.metadata).toMatchObject({ extractionMethod: "JSON_LD" });
+  });
+
+  it("does not treat rendering-script churn as a meaningful article change", () => {
+    const common = `<head><meta property="og:title" content="Grand Theft Auto VI official update"><meta property="og:description" content="Rockstar confirms the same public GTA VI details."><link rel="canonical" href="https://www.rockstargames.com/newswire/article/stable"></head>`;
+    const left = parseHtmlArticle(`<html>${common}<body><script>build='one'</script></body></html>`, officialSource, officialSource.url);
+    const right = parseHtmlArticle(`<html>${common}<body><script>build='two'</script></body></html>`, officialSource, officialSource.url);
+    expect(left?.contentHash).toBe(right?.contentHash);
+  });
+
+  it("normalizes legacy official canonicals to HTTPS and extracts visible release dates", () => {
+    const takeTwo = { ...officialSource, domain: "take2games.com", url: "https://www.take2games.com/ir/press-releases" };
+    const html = `<head><meta property="og:title" content="Rockstar Games Announces Pre-Orders for Grand Theft Auto VI | Take-Two Interactive Software, Inc."><link rel="canonical" href="http://www.take2games.com/ir/news/preorders"></head><body><p>NEW YORK --(BUSINESS WIRE)--Jun. 24, 2026-- Rockstar Games confirms pre-orders for Grand Theft Auto VI.</p></body>`;
+    const parsed = parseHtmlArticle(html, takeTwo, takeTwo.url);
+    expect(parsed?.canonicalUrl).toBe("https://www.take2games.com/ir/news/preorders");
+    expect(parsed?.title).toBe("Rockstar Games Announces Pre-Orders for Grand Theft Auto VI");
+    expect(parsed?.publishedAt?.toISOString()).toBe("2026-06-24T00:00:00.000Z");
+  });
+
+  it("reports a client-rendered listing fallback as degraded instead of silently healthy", async () => {
+    const source = {
+      ...officialSource,
+      connectorConfig: {
+        ...officialSource.connectorConfig,
+        clientRenderedListing: true,
+        requireItems: true,
+        detailUrls: ["https://www.rockstargames.com/newswire/article/extended-look"],
+      },
+    };
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response("<html><body><div id='root'></div></body></html>", { status: 200, headers: { "content-type": "text/html" } }))
+      .mockResolvedValueOnce(new Response("<html><head><meta property='og:title' content='Grand Theft Auto VI: An Extended Look'><meta property='og:description' content='Grand Theft Auto VI official presentation details.'><link rel='canonical' href='https://www.rockstargames.com/newswire/article/extended-look'></head></html>", { status: 200, headers: { "content-type": "text/html" } }));
+    const result = await new HtmlListingConnector().fetch(source, fetcher as typeof fetch);
+    expect(result.health).toBe("DEGRADED");
+    expect(result.extractionMethod).toBe("KNOWN_ARTICLE_METADATA");
+    expect(result.items).toHaveLength(1);
+    expect(result.requestCount).toBe(2);
+    expect(fetcher.mock.calls[0][1]?.headers).toMatchObject({ Accept: expect.stringContaining("text/html") });
+  });
+
+  it("marks required empty extraction as failed", async () => {
+    const source = { ...officialSource, connectorConfig: { ...officialSource.connectorConfig, requireItems: true } };
+    const fetcher = vi.fn().mockResolvedValue(new Response("<html><body>No relevant links</body></html>", { status: 200 }));
+    const result = await new HtmlListingConnector().fetch(source, fetcher as typeof fetch);
+    expect(result.extractionSucceeded).toBe(false);
+    expect(result.health).toBe("FAILED");
   });
 
   it("retries one transient gateway failure and then stops", async () => {
@@ -85,6 +152,11 @@ describe("source connectors", () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 302, headers: { location: "https://127.0.0.1/private" } }));
     await expect(fetchSourceText(officialSource, fetcher as typeof fetch)).rejects.toThrow(/Private/);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a public redirect that leaves the monitored source domain", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 302, headers: { location: "https://example.com/copied-feed" } }));
+    await expect(fetchSourceText(officialSource, fetcher as typeof fetch)).rejects.toThrow(/domain/);
   });
 });
 

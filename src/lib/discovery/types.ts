@@ -30,6 +30,15 @@ export type ConnectorItem = {
   metadata: Record<string, unknown>;
 };
 
+export type ExtractionMethod =
+  | "STRUCTURED_FEED"
+  | "JSON_LD"
+  | "SSR_HTML"
+  | "OPEN_GRAPH"
+  | "KNOWN_ARTICLE_METADATA"
+  | "OFFICIAL_VIDEO_FEED"
+  | "NONE";
+
 export type ConnectorResult = {
   sourceUrl: string;
   fetchedAt: Date;
@@ -38,6 +47,10 @@ export type ConnectorResult = {
   responseHash: string;
   requestCount: number;
   items: ConnectorItem[];
+  extractionMethod: ExtractionMethod;
+  extractionSucceeded: boolean;
+  health: "HEALTHY" | "DEGRADED" | "FAILED";
+  lastContentHash?: string;
   warnings: string[];
 };
 
