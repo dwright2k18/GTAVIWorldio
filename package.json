@@ -15,7 +15,8 @@
     "db:check": "tsx scripts/check-database.ts",
     "db:policy-test": "tsx scripts/check-rls.ts",
     "discovery:test": "tsx scripts/test-discovery-connectors.ts",
-    "discovery:official-test": "node --env-file=.env.development.local --conditions=react-server --import tsx scripts/test-official-source-connectors.ts"
+    "discovery:official-test": "node --env-file=.env.development.local --conditions=react-server --import tsx scripts/test-official-source-connectors.ts",
+    "discovery:score-replay": "tsx scripts/replay-phase-4-2-scoring.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

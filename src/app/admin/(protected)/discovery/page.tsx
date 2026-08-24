@@ -43,6 +43,25 @@ export default async function DiscoveryDashboardPage() {
         <article className="rounded-2xl border border-amber-300/20 bg-amber-300/[0.05] p-5"><p className="text-sm font-bold text-amber-200">Recurring monitoring</p><p className="mt-2 text-xl font-black">{controls?.settings?.recurringMonitoringEnabled ? "Configured" : "OFF"}</p></article>
       </section>
 
+      <section className="mt-8 rounded-3xl border border-cyan-300/20 bg-cyan-300/[0.035] p-5 sm:p-7">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div><p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-300">Rockstar coverage</p><h2 className="mt-2 text-2xl font-black">{dashboard.officialCoverage.overall.replaceAll("_", " ")}</h2></div>
+          <p className="text-sm font-bold text-slate-400">{dashboard.officialCoverage.gapAlerts} open coverage-gap alert{dashboard.officialCoverage.gapAlerts === 1 ? "" : "s"}</p>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {dashboard.officialCoverage.signals.map((signal) => { const metrics = dashboard.officialCoverage.connectorMetrics.find((entry) => entry.label === signal.label); return <article className="rounded-2xl border border-white/10 bg-black/20 p-4" key={signal.label}><p className="text-sm font-black">{signal.label}</p><p className={`mt-2 text-xs font-black uppercase tracking-wider ${signal.health === "HEALTHY" ? "text-emerald-300" : signal.health === "DEGRADED" ? "text-amber-300" : "text-slate-400"}`}>{signal.health.replaceAll("_", " ")}</p><p className="mt-2 text-xs text-slate-500">Last extraction: {signal.lastSuccessfulExtractionAt?.toLocaleString("en-US") ?? "Not checked"}</p><p className="mt-2 text-xs text-slate-500">{metrics?.requests ?? 0} requests · {metrics?.successfulExtractions ?? 0} extractions · {metrics?.failures ?? 0} failures</p></article>; })}
+        </div>
+        <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
+          <div><dt className="text-slate-500">Requests</dt><dd className="font-black">{dashboard.officialCoverage.metrics.requests}</dd></div>
+          <div><dt className="text-slate-500">Extractions</dt><dd className="font-black">{dashboard.officialCoverage.metrics.successfulExtractions}</dd></div>
+          <div><dt className="text-slate-500">New / known URLs</dt><dd className="font-black">{dashboard.officialCoverage.metrics.newUrls} / {dashboard.officialCoverage.metrics.knownUrls}</dd></div>
+          <div><dt className="text-slate-500">Evidence attached</dt><dd className="font-black">{dashboard.officialCoverage.metrics.evidenceAttached}</dd></div>
+          <div><dt className="text-slate-500">Average response</dt><dd className="font-black">{dashboard.officialCoverage.metrics.averageResponseMs} ms</dd></div>
+        </dl>
+        <p className="mt-4 text-xs text-slate-500">Last successful discovery: {dashboard.officialCoverage.lastSuccessfulDiscovery?.toLocaleString("en-US") ?? "Not checked"} · Last official event detected: {dashboard.officialCoverage.lastOfficialEvent?.toLocaleString("en-US") ?? "None recorded"}</p>
+        <p className="mt-5 text-xs leading-5 text-slate-400">Newswire health is reported independently. A degraded listing cannot be relabeled healthy merely because YouTube or known-page monitoring is working.</p>
+      </section>
+
       {dashboard.alerts.length ? (
         <section className="mt-8 rounded-3xl border border-fuchsia-300/20 bg-fuchsia-300/[0.045] p-5 sm:p-7">
           <h2 className="text-xl font-black">Newsroom alerts</h2>

@@ -8,11 +8,14 @@ import {
   discoveryAlerts,
   discoveryAuditLogs,
   discoveryCandidates,
+  discoveryScoreRuns,
   discoverySettings,
   discoveryUsageDaily,
   monitoredSources,
   sourceFetchRuns,
   sourceSnapshots,
+  sources,
+  stories,
   storyClusters,
 } from "@/db/schema";
 
@@ -25,6 +28,8 @@ import { discoverySnapshotExpiry } from "./retention-policy";
 import { scoreCandidate } from "./scoring";
 import type { DiscoverySource } from "./types";
 import { recurringDiscoveryEnabled } from "./pipeline";
+import { buildOfficialSourceGap, classifyOfficialUrl, officialReferencesFromMetadata } from "./official-consensus";
+import { normalizeHeadline } from "./normalize";
 
 type IngestionMode = "TEST_ONLY" | "MANUAL_TEST" | "RECURRING";
 
@@ -112,7 +117,12 @@ export async function runDiscoverySource(
     const result = await connectorFor(asDiscoverySource(source)).fetch(asDiscoverySource(source), options.fetcher);
     const candidateLimit = settings?.maxCandidatesPerRun ?? 20;
     const scoredCandidates = result.items.slice(0, candidateLimit).map((item) => {
-      const scored = scoreCandidate(asDiscoverySource(source), item);
+      const scored = scoreCandidate(asDiscoverySource(source), item, {
+        independentSourceCount: 1,
+        evidenceComplete: Boolean(item.summary?.trim()),
+        isNovel: true,
+        referenceTime: result.fetchedAt,
+      });
       return { scored, research: buildSafeResearchPacket(scored), isTest: options.mode !== "RECURRING" };
     });
     if (options.mode === "TEST_ONLY") {
@@ -133,6 +143,8 @@ export async function runDiscoverySource(
         requestCount: result.requestCount,
         responseBytes: result.responseBytes,
         itemsSeen: result.items.length,
+        durationMs: Math.max(0, completedAt.valueOf() - startedAt.valueOf()),
+        successfulResponses: result.successfulResponses ?? (result.httpStatus >= 200 && result.httpStatus < 400 ? 1 : 0),
         errorCode: "EXTRACTION_FAILED",
         errorMessage: message,
         metadata: { extractionMethod: result.extractionMethod, warnings: result.warnings },
@@ -179,6 +191,44 @@ export async function runDiscoverySource(
       .from(discoveryCandidates)
       .orderBy(desc(discoveryCandidates.discoveredAt))
       .limit(500);
+    const registeredUrlRows = await db.select({ url: monitoredSources.url }).from(monitoredSources);
+    const evidenceUrlRows = await db.select({ url: candidateEvidence.sourceUrl }).from(candidateEvidence);
+    const storySourceUrlRows = await db.select({ url: sources.url }).from(sources);
+    const storyFingerprintRows = await db.select({
+      id: stories.id,
+      title: stories.headline,
+      canonicalUrl: sources.url,
+      publishedAt: stories.originalSourcePublishedAt,
+    }).from(stories).leftJoin(sources, eq(stories.primarySourceId, sources.id));
+    const clusterFingerprintRows = await db.select({
+      id: storyClusters.id,
+      title: storyClusters.title,
+      publishedAt: storyClusters.firstSeenAt,
+    }).from(storyClusters);
+    existingFingerprints.push(
+      ...storyFingerprintRows.map((story) => ({
+        id: `story:${story.id}`,
+        sourceId: source.id,
+        canonicalUrl: story.canonicalUrl ?? `https://gtaviworld.io/newsroom-story/${story.id}`,
+        normalizedTitle: normalizeHeadline(story.title),
+        contentHash: `story:${story.id}`,
+        sourcePublishedAt: story.publishedAt,
+      })),
+      ...clusterFingerprintRows.map((cluster) => ({
+        id: `cluster:${cluster.id}`,
+        sourceId: source.id,
+        canonicalUrl: `https://gtaviworld.io/story-cluster/${cluster.id}`,
+        normalizedTitle: normalizeHeadline(cluster.title),
+        contentHash: `cluster:${cluster.id}`,
+        sourcePublishedAt: cluster.publishedAt,
+      })),
+    );
+    const knownUrlSets = {
+      sourceUrls: registeredUrlRows.map(({ url }) => url),
+      evidenceUrls: evidenceUrlRows.map(({ url }) => url),
+      candidateUrls: existingFingerprints.map(({ canonicalUrl }) => canonicalUrl),
+      storyUrls: storySourceUrlRows.map(({ url }) => url),
+    };
 
     const [previousSnapshot] = await db
       .select()
@@ -196,6 +246,9 @@ export async function runDiscoverySource(
     const isInitialBaseline = priorSnapshotHashes.size === 0;
     let created = 0;
     let duplicates = 0;
+    let newUrls = 0;
+    let knownUrls = 0;
+    let evidenceAttached = 0;
     const assessments: Array<{ title: string; status: string; reason: string; matchingCandidateId?: string }> = [];
     const allowCandidateCreation = options.mode === "RECURRING" || options.allowCandidateCreation === true;
 
@@ -223,14 +276,32 @@ export async function runDiscoverySource(
         contentHash: item.contentHash,
         publishedAt: item.publishedAt,
       }, existingFingerprints);
+      const urlResult = classifyOfficialUrl(canonicalUrl, knownUrlSets, duplicate);
+      if (urlResult.classification === "NEW") newUrls += 1;
+      else knownUrls += 1;
       assessments.push({
         title: item.title,
         status: duplicate.status,
-        reason: duplicate.reason,
+        reason: `${duplicate.reason} URL: ${urlResult.classification}.`,
         matchingCandidateId: duplicate.matchingCandidateId?.startsWith("run:") ? undefined : duplicate.matchingCandidateId,
       });
       if (duplicate.status !== "NEW_STORY" && duplicate.matchingCandidateId) {
         duplicates += 1;
+        if (duplicate.matchingCandidateId.startsWith("story:") || duplicate.matchingCandidateId.startsWith("cluster:")) {
+          await db.insert(discoveryAuditLogs).values({
+            actorType: "AUTOMATION",
+            action: "EXISTING_EVENT_MATCHED",
+            reason: "The official signal matched an existing newsroom story or event cluster. No candidate was created.",
+            metadata: {
+              sourceId: source.id,
+              sourceUrl: canonicalUrl,
+              match: duplicate.matchingCandidateId,
+              duplicateStatus: duplicate.status,
+              similarity: duplicate.similarity,
+            },
+          });
+          continue;
+        }
         if (duplicate.matchingCandidateId.startsWith("run:")) {
           await db.insert(discoveryAuditLogs).values({
             actorType: "AUTOMATION",
@@ -258,6 +329,7 @@ export async function runDiscoverySource(
         }).onConflictDoNothing({ target: [candidateEvidence.candidateId, candidateEvidence.sourceUrl] })
           .returning({ id: candidateEvidence.id });
         if (attachedEvidence.length) {
+          evidenceAttached += attachedEvidence.length;
           await db.update(discoveryCandidates).set({ lastUpdatedAt: new Date(), updatedAt: new Date() })
             .where(eq(discoveryCandidates.id, duplicate.matchingCandidateId));
           await db.insert(discoveryAuditLogs).values({
@@ -368,6 +440,45 @@ export async function runDiscoverySource(
         reason: "Source connector created a discovery candidate. No story was created or published.",
         metadata: { sourceId: source.id, priority: scored.priority },
       });
+      await db.insert(discoveryScoreRuns).values({
+        candidateId: candidate.id,
+        scoringVersion: scored.scoringVersion,
+        inputHash: scored.inputHash,
+        sourceAuthorityScore: scored.sourceAuthorityScore,
+        confidenceScore: scored.confidenceScore,
+        newsworthinessScore: scored.newsworthinessScore,
+        seoOpportunityScore: scored.seoOpportunityScore,
+        trendScore: scored.trendScore,
+        quickHitScore: scored.quickHitScore,
+        primaryVideoScore: scored.primaryVideoScore,
+        componentBreakdown: scored.scoreBreakdowns,
+        inputSnapshot: {
+          source: {
+            id: source.id,
+            authorityTier: source.authorityTier,
+            isFirstParty: source.isFirstParty,
+            reliabilityScore: source.reliabilityScore,
+          },
+          evidence: {
+            canonicalUrl,
+            title: scored.normalizedTitle,
+            summary: item.summary?.trim() ?? null,
+            publishedAt: item.publishedAt?.toISOString() ?? null,
+            contentHash: item.contentHash,
+            changeType: item.changeType,
+            directEvidence: item.directEvidence,
+          },
+          signals: {
+            independentSourceCount: 1,
+            evidenceComplete: Boolean(item.summary?.trim()),
+            isNovel: true,
+            referenceTime: result.fetchedAt.toISOString(),
+          },
+          scoringVersion: scored.scoringVersion,
+        },
+      }).onConflictDoNothing({
+        target: [discoveryScoreRuns.candidateId, discoveryScoreRuns.scoringVersion, discoveryScoreRuns.inputHash],
+      });
 
       const alert = scored.newsworthinessScore >= 90 && source.authorityTier === "TIER_1"
         ? { alertType: "URGENT_OFFICIAL_UPDATE" as const, priority: scored.newsworthinessScore, detail: "High-impact first-party development requires immediate editorial review." }
@@ -400,6 +511,41 @@ export async function runDiscoverySource(
       });
     }
 
+    const resultUrls = new Set(result.items.map((item) => item.canonicalUrl ?? item.url));
+    for (const item of result.items) {
+      const metadataUnresolved = Array.isArray(item.metadata.unresolvedOfficialUrls)
+        ? item.metadata.unresolvedOfficialUrls.filter((value): value is string => typeof value === "string")
+        : [];
+      const referencedButMissing = officialReferencesFromMetadata(item.metadata)
+        .filter((url) => !resultUrls.has(url))
+        .filter((url) => classifyOfficialUrl(url, knownUrlSets).classification === "NEW");
+      const gap = buildOfficialSourceGap(item.canonicalUrl ?? item.url, [...metadataUnresolved, ...referencedButMissing]);
+      if (!gap) continue;
+      const [existingGap] = await db.select({ id: discoveryAlerts.id })
+        .from(discoveryAlerts)
+        .where(and(
+          eq(discoveryAlerts.sourceId, source.id),
+          eq(discoveryAlerts.alertType, "OFFICIAL_SOURCE_GAP"),
+          eq(discoveryAlerts.status, "NEW"),
+        ))
+        .limit(1);
+      if (!existingGap) {
+        await db.insert(discoveryAlerts).values({
+          sourceId: source.id,
+          alertType: gap.alertType,
+          priority: gap.priority,
+          title: gap.title,
+          detail: gap.detail,
+        });
+        await db.insert(discoveryAuditLogs).values({
+          actorType: "AUTOMATION",
+          action: "OFFICIAL_SOURCE_GAP_DETECTED",
+          reason: "An official cross-signal reference could not be resolved to known evidence. No content was published.",
+          metadata: { sourceId: source.id, referencingUrl: item.canonicalUrl ?? item.url, unresolvedUrls: gap.urls },
+        });
+      }
+    }
+
     const persistedAt = new Date();
     await db.insert(sourceFetchRuns).values({
       sourceId: source.id,
@@ -413,6 +559,12 @@ export async function runDiscoverySource(
       itemsSeen: result.items.length,
       candidatesCreated: created,
       duplicatesSkipped: duplicates,
+      durationMs: Math.max(0, persistedAt.valueOf() - startedAt.valueOf()),
+      successfulResponses: result.successfulResponses ?? (result.httpStatus >= 200 && result.httpStatus < 400 ? 1 : 0),
+      successfulExtractions: result.successfulExtractions ?? (result.extractionSucceeded ? 1 : 0),
+      newUrls,
+      knownUrls,
+      evidenceAttached,
       metadata: {
         extractionMethod: result.extractionMethod,
         health: result.health,
@@ -447,6 +599,9 @@ export async function runDiscoverySource(
           itemsSeen: result.items.length,
           candidatesCreated: created,
           duplicatesSkipped: duplicates,
+          newUrls,
+          knownUrls,
+          evidenceAttached,
         },
       });
     }
@@ -486,6 +641,7 @@ export async function runDiscoverySource(
       requestCount: 1,
       errorCode: "CONNECTOR_FAILURE",
       errorMessage: message,
+      durationMs: Math.max(0, completedAt.valueOf() - startedAt.valueOf()),
     });
     await db.update(monitoredSources).set({
       healthStatus: failures >= 3 ? "CIRCUIT_OPEN" : "FAILED",

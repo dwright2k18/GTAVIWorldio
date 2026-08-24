@@ -37,6 +37,9 @@ async function main() {
       automatic_drafting_enabled: boolean;
       deep_research_enabled: boolean;
       candidate_evidence_count: number;
+      discovery_score_runs: number;
+      discovery_score_overrides: number;
+      official_source_gap_alerts: number;
       source_health: Array<{
         id: string;
         name: string;
@@ -50,6 +53,8 @@ async function main() {
         consecutive_failures: number;
         last_content_hash: string | null;
         last_error: string | null;
+        coverage_group: string | null;
+        signal_label: string | null;
       }>;
     }>
     >`
@@ -74,6 +79,9 @@ async function main() {
       (select coalesce(bool_or(automatic_drafting_enabled), false) from public.discovery_settings) as automatic_drafting_enabled,
       (select coalesce(bool_or(deep_research_enabled), false) from public.discovery_settings) as deep_research_enabled
       ,(select count(*)::int from public.candidate_evidence where candidate_id = '70db3fc3-0671-4824-80b4-6682ac6d7b76') as candidate_evidence_count
+      ,(select count(*)::int from public.discovery_score_runs) as discovery_score_runs
+      ,(select count(*)::int from public.discovery_score_overrides) as discovery_score_overrides
+      ,(select count(*)::int from public.discovery_alerts where alert_type = 'OFFICIAL_SOURCE_GAP' and status in ('NEW', 'ACKNOWLEDGED')) as official_source_gap_alerts
       ,(select coalesce(json_agg(json_build_object(
         'id', id,
         'name', name,
@@ -87,14 +95,18 @@ async function main() {
         'consecutive_failures', consecutive_failures,
         'last_content_hash', last_content_hash,
         'last_error', last_error
+        ,'coverage_group', coverage_group
+        ,'signal_label', signal_label
       ) order by id), '[]'::json) from public.monitored_sources where id in (
         '41000000-0000-4000-8000-000000000001',
+        '41000000-0000-4000-8000-000000000002',
+        '41000000-0000-4000-8000-000000000003',
         '41000000-0000-4000-8000-000000000004',
         '41000000-0000-4000-8000-000000000009'
       )) as source_health
     `;
 
-    const migrationSql = await readFile("drizzle/0005_phase_4_1_source_hardening.sql");
+    const migrationSql = await readFile("drizzle/0006_phase_4_2_discovery_scoring.sql");
     const migrationHash = createHash("sha256").update(migrationSql).digest("hex");
     const [migrationState] = await client<Array<{ total: number; latest_hash: string }>>`
       select count(*)::int as total, (array_agg(hash order by created_at desc))[1] as latest_hash
@@ -112,7 +124,7 @@ async function main() {
       counts.published !== 0 ||
       counts.scheduled !== 0 ||
       counts.evergreen_pages !== 11 ||
-      counts.rls_tables !== 29 ||
+      counts.rls_tables !== 31 ||
       counts.anonymous_table_grants !== 0 ||
       counts.profile_mutation_grants !== 0 ||
       counts.policy_test_users !== 0 ||
@@ -121,14 +133,17 @@ async function main() {
       counts.discovery_candidates !== 1 ||
       !counts.legitimate_candidate_present ||
       counts.test_candidates !== 0 ||
+      counts.discovery_score_runs !== 1 ||
+      counts.discovery_score_overrides !== 0 ||
+      counts.official_source_gap_alerts !== 0 ||
       counts.discovery_settings !== 1 ||
       counts.recurring_monitoring_enabled ||
       counts.automatic_drafting_enabled ||
       counts.deep_research_enabled ||
-      migrationState.total !== 6 ||
+      migrationState.total !== 7 ||
       migrationState.latest_hash !== migrationHash
     ) {
-      throw new Error("Database safety checks did not match the expected Phase 4.1 test-mode state.");
+      throw new Error("Database safety checks did not match the expected Phase 4.2 disabled state.");
     }
   } finally {
     await client.end();

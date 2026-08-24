@@ -8,6 +8,8 @@ import {
   discoveryAlerts,
   discoveryAuditLogs,
   discoveryCandidates,
+  discoveryScoreOverrides,
+  discoveryScoreRuns,
   discoverySettings,
   discoveryUsageDaily,
   evergreenPages,
@@ -17,6 +19,7 @@ import {
   storyClusters,
   type EditorProfile,
 } from "@/db/schema";
+import { overallRockstarCoverage, type CoverageSignal } from "./official-consensus";
 
 function candidateVisibleToEditor(
   editor: EditorProfile,
@@ -69,6 +72,61 @@ export async function getDiscoveryDashboard(editor: EditorProfile) {
     .select({ status: monitoredSources.healthStatus, total: count() })
     .from(monitoredSources)
     .groupBy(monitoredSources.healthStatus);
+  const officialSources = await db
+    .select()
+    .from(monitoredSources)
+    .where(inArray(monitoredSources.coverageGroup, ["ROCKSTAR_OFFICIAL", "TAKE_TWO_OFFICIAL"]));
+  const officialSourceIds = officialSources.map((source) => source.id);
+  const officialRuns = officialSourceIds.length
+    ? await db.select().from(sourceFetchRuns)
+        .where(inArray(sourceFetchRuns.sourceId, officialSourceIds))
+        .orderBy(desc(sourceFetchRuns.startedAt))
+        .limit(200)
+    : [];
+  const labels = ["Newswire HTML", "Official YouTube", "Known pages", "Take-Two"] as const;
+  const coverageSignals: CoverageSignal[] = labels.map((label) => {
+    const matching = officialSources.filter((source) => source.signalLabel === label);
+    const priority = ["HEALTHY", "DEGRADED", "FAILED", "CIRCUIT_OPEN", "NOT_CHECKED"] as const;
+    const bestHealth = priority.find((health) => matching.some((source) => source.healthStatus === health)) ?? "NOT_CHECKED";
+    return {
+      label,
+      health: bestHealth,
+      lastSuccessfulExtractionAt: matching.map((source) => source.lastSuccessfulExtractionAt).filter(Boolean).sort((a, b) => b!.valueOf() - a!.valueOf())[0] ?? null,
+      lastDiscoveredItemAt: matching.map((source) => source.lastDiscoveredItemAt).filter(Boolean).sort((a, b) => b!.valueOf() - a!.valueOf())[0] ?? null,
+    };
+  });
+  const completedRuns = officialRuns.filter((run) => run.completedAt);
+  const connectorMetricsBySignal = labels.map((label) => {
+    const sourceIds = new Set(officialSources.filter((source) => source.signalLabel === label).map((source) => source.id));
+    const runs = completedRuns.filter((run) => sourceIds.has(run.sourceId));
+    return {
+      label,
+      requests: runs.reduce((sum, run) => sum + run.requestCount, 0),
+      successfulResponses: runs.reduce((sum, run) => sum + run.successfulResponses, 0),
+      successfulExtractions: runs.reduce((sum, run) => sum + run.successfulExtractions, 0),
+      newUrls: runs.reduce((sum, run) => sum + run.newUrls, 0),
+      knownUrls: runs.reduce((sum, run) => sum + run.knownUrls, 0),
+      candidatesCreated: runs.reduce((sum, run) => sum + run.candidatesCreated, 0),
+      evidenceAttached: runs.reduce((sum, run) => sum + run.evidenceAttached, 0),
+      failures: runs.filter((run) => run.status === "FAILED").length,
+      rateLimits: runs.filter((run) => run.errorCode?.includes("RATE_LIMIT")).length,
+      averageResponseMs: runs.length ? Math.round(runs.reduce((sum, run) => sum + run.durationMs, 0) / runs.length) : 0,
+    };
+  });
+  const connectorMetrics = {
+    requests: completedRuns.reduce((sum, run) => sum + run.requestCount, 0),
+    successfulResponses: completedRuns.reduce((sum, run) => sum + run.successfulResponses, 0),
+    successfulExtractions: completedRuns.reduce((sum, run) => sum + run.successfulExtractions, 0),
+    newUrls: completedRuns.reduce((sum, run) => sum + run.newUrls, 0),
+    knownUrls: completedRuns.reduce((sum, run) => sum + run.knownUrls, 0),
+    candidatesCreated: completedRuns.reduce((sum, run) => sum + run.candidatesCreated, 0),
+    evidenceAttached: completedRuns.reduce((sum, run) => sum + run.evidenceAttached, 0),
+    failures: completedRuns.filter((run) => run.status === "FAILED").length,
+    rateLimits: completedRuns.filter((run) => run.errorCode?.includes("RATE_LIMIT")).length,
+    averageResponseMs: completedRuns.length
+      ? Math.round(completedRuns.reduce((sum, run) => sum + run.durationMs, 0) / completedRuns.length)
+      : 0,
+  };
 
   return {
     candidates: visibleCandidates,
@@ -80,6 +138,15 @@ export async function getDiscoveryDashboard(editor: EditorProfile) {
       }, new Map<string, number>()),
     ),
     sourceHealth: Object.fromEntries(sourceHealth.map((row) => [row.status, Number(row.total)])),
+    officialCoverage: {
+      signals: coverageSignals,
+      overall: overallRockstarCoverage(coverageSignals),
+      gapAlerts: alerts.filter((alert) => alert.alertType === "OFFICIAL_SOURCE_GAP").length,
+      lastSuccessfulDiscovery: coverageSignals.map((signal) => signal.lastSuccessfulExtractionAt).filter(Boolean).sort((a, b) => b!.valueOf() - a!.valueOf())[0] ?? null,
+      lastOfficialEvent: coverageSignals.map((signal) => signal.lastDiscoveredItemAt).filter(Boolean).sort((a, b) => b!.valueOf() - a!.valueOf())[0] ?? null,
+      metrics: connectorMetrics,
+      connectorMetrics: connectorMetricsBySignal,
+    },
   };
 }
 
@@ -139,8 +206,20 @@ export async function getDiscoveryCandidate(id: string, editor: EditorProfile) {
         .where(eq(discoveryCandidates.clusterId, record.cluster.id))
         .orderBy(asc(discoveryCandidates.sourcePublishedAt))
     : [];
+  const scoreRuns = await db
+    .select()
+    .from(discoveryScoreRuns)
+    .where(eq(discoveryScoreRuns.candidateId, id))
+    .orderBy(desc(discoveryScoreRuns.scoredAt))
+    .limit(20);
+  const scoreOverrides = await db
+    .select()
+    .from(discoveryScoreOverrides)
+    .where(eq(discoveryScoreOverrides.candidateId, id))
+    .orderBy(desc(discoveryScoreOverrides.createdAt))
+    .limit(50);
 
-  return { ...record, evidence, audit, availableSources, clusterCandidates };
+  return { ...record, evidence, audit, availableSources, clusterCandidates, scoreRuns, scoreOverrides };
 }
 
 export async function getStoryCluster(id: string, editor: EditorProfile) {

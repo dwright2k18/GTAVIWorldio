@@ -10,6 +10,7 @@ describe("discovery role permissions", () => {
 
   it("allows editors to manage candidates but not automation limits", () => {
     expect(discoveryPermissionDenial("EDITOR", "PROMOTE_TO_DRAFT")).toBeNull();
+    expect(discoveryPermissionDenial("EDITOR", "OVERRIDE_SCORE")).toBeNull();
     expect(discoveryPermissionDenial("EDITOR", "MANAGE_SETTINGS")).toMatch(/owners and administrators/i);
     expect(discoveryPermissionDenial("EDITOR", "MANAGE_SOURCES")).toMatch(/owners and administrators/i);
   });
@@ -19,6 +20,7 @@ describe("discovery role permissions", () => {
     expect(discoveryPermissionDenial("FACT_CHECKER", "ADD_EVIDENCE")).toBeNull();
     expect(discoveryPermissionDenial("FACT_CHECKER", "PROMOTE_TO_DRAFT")).toMatch(/cannot/i);
     expect(discoveryPermissionDenial("FACT_CHECKER", "REJECT")).toMatch(/cannot/i);
+    expect(discoveryPermissionDenial("FACT_CHECKER", "OVERRIDE_SCORE")).toMatch(/cannot/i);
   });
 
   it("limits authors to assigned or promoted research", () => {
@@ -26,5 +28,6 @@ describe("discovery role permissions", () => {
     expect(discoveryPermissionDenial("AUTHOR", "ADD_EVIDENCE", { assignedOrPromoted: true })).toBeNull();
     expect(discoveryPermissionDenial("AUTHOR", "VIEW")).toMatch(/assigned or promoted/i);
     expect(discoveryPermissionDenial("AUTHOR", "PROMOTE_TO_DRAFT", { assignedOrPromoted: true })).toMatch(/only view/i);
+    expect(discoveryPermissionDenial("AUTHOR", "OVERRIDE_SCORE", { assignedOrPromoted: true })).toMatch(/only view/i);
   });
 });

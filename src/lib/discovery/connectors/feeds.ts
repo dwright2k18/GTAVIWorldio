@@ -2,6 +2,7 @@ import { canonicalizeSourceUrl, decodeHtmlEntities, normalizeMeaningfulText, sha
 import { discoveryUrlMatchesDomain } from "../safety";
 import type { ConnectorItem, ConnectorResult, DiscoverySource } from "../types";
 import { fetchSourceText, passesConfiguredIncludeTerms, type DiscoveryFetcher, type SourceConnector } from "./base";
+import { extractRockstarNewswireUrls } from "./html";
 
 function firstTag(block: string, names: string[]) {
   for (const name of names) {
@@ -61,6 +62,7 @@ export function parseFeedItems(
         extractionMethod: source.domain === "youtube.com" ? "OFFICIAL_VIDEO_FEED" : "STRUCTURED_FEED",
         thumbnail: thumbnail ? decodeHtmlEntities(thumbnail) : null,
         videoId: videoId ?? null,
+        referencedOfficialUrls: extractRockstarNewswireUrls(block, finalUrl),
       },
     });
   }
@@ -83,6 +85,8 @@ export class FeedConnector implements SourceConnector {
       responseBytes: response.responseBytes,
       responseHash: response.responseHash,
       requestCount: response.requestCount,
+      successfulResponses: 1,
+      successfulExtractions: items.length,
       items,
       extractionMethod: source.domain === "youtube.com" ? "OFFICIAL_VIDEO_FEED" : "STRUCTURED_FEED",
       extractionSucceeded,
@@ -136,6 +140,7 @@ export class JsonFeedConnector implements SourceConnector {
       ? Math.max(1, Math.min(50, Math.floor(source.connectorConfig.maxItems)))
       : 25;
     const value = JSON.parse(response.text) as unknown;
+    const items = parseJsonFeedItems(value, source, response.finalUrl, maximumItems);
     return {
       sourceUrl: response.finalUrl,
       fetchedAt: new Date(),
@@ -143,7 +148,9 @@ export class JsonFeedConnector implements SourceConnector {
       responseBytes: response.responseBytes,
       responseHash: response.responseHash,
       requestCount: response.requestCount,
-      items: parseJsonFeedItems(value, source, response.finalUrl, maximumItems),
+      successfulResponses: 1,
+      successfulExtractions: items.length,
+      items,
       extractionMethod: "STRUCTURED_FEED",
       extractionSucceeded: true,
       health: "HEALTHY",

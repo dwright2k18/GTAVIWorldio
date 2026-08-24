@@ -9,6 +9,17 @@ export type ExistingCandidateFingerprint = {
   sourcePublishedAt?: Date | null;
 };
 
+export function eventSignature(value: string) {
+  const normalized = normalizeHeadline(value);
+  if (/\bextended look\b/.test(normalized)) return "gta-vi-extended-look";
+  if (/\bpre orders?\b|\bpreorders?\b/.test(normalized)) return "gta-vi-preorder";
+  if (/\btrailer 2\b/.test(normalized)) return "gta-vi-trailer-2";
+  if (/\btrailer 1\b/.test(normalized)) return "gta-vi-trailer-1";
+  if (/\bcover art\b/.test(normalized)) return "gta-vi-cover-art";
+  if (/\b(?:release|launch|delay|set to launch)\b/.test(normalized)) return "gta-vi-release-timing";
+  return clusterEventKey(normalized);
+}
+
 export function assessDuplicate(
   candidate: {
     canonicalUrl: string;
@@ -20,6 +31,7 @@ export function assessDuplicate(
 ): DuplicateAssessment {
   const normalizedUrl = canonicalizeSourceUrl(candidate.canonicalUrl);
   const normalizedTitle = normalizeHeadline(candidate.title);
+  const candidateEventSignature = eventSignature(normalizedTitle);
 
   for (const record of existing) {
     if (record.contentHash === candidate.contentHash) {
@@ -31,7 +43,11 @@ export function assessDuplicate(
   }
 
   let best: { record: ExistingCandidateFingerprint; similarity: number } | null = null;
+  let eventMatch: ExistingCandidateFingerprint | null = null;
   for (const record of existing) {
+    if (candidateEventSignature && eventSignature(record.normalizedTitle) === candidateEventSignature) {
+      eventMatch ??= record;
+    }
     const similarity = jaccardSimilarity(normalizedTitle, record.normalizedTitle);
     if (!best || similarity > best.similarity) best = { record, similarity };
   }
@@ -42,6 +58,14 @@ export function assessDuplicate(
     : Number.POSITIVE_INFINITY;
   if (best.similarity >= 0.82 && hoursApart <= 72) {
     return { status: "LIKELY_DUPLICATE", similarity: best.similarity, reason: "Highly similar headline within the same reporting window.", matchingCandidateId: best.record.id };
+  }
+  if (eventMatch) {
+    return {
+      status: "RELATED",
+      similarity: Math.max(0.5, best.similarity),
+      reason: `Deterministic event signature matched ${candidateEventSignature}.`,
+      matchingCandidateId: eventMatch.id,
+    };
   }
   if (best.similarity >= 0.5) {
     return { status: "RELATED", similarity: best.similarity, reason: "Overlapping topic language suggests a related event.", matchingCandidateId: best.record.id };

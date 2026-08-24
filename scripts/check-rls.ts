@@ -102,6 +102,8 @@ async function main() {
   const clusterId = randomUUID();
   const assignedCandidateId = randomUUID();
   const unassignedCandidateId = randomUUID();
+  const scoreRunId = randomUUID();
+  const scoreOverrideId = randomUUID();
 
   try {
     await client.begin(async (sql) => {
@@ -343,6 +345,46 @@ async function main() {
             null,
             ${profiles.editor}
           )
+      `;
+
+      await sql`
+        insert into public.discovery_score_runs (
+          id,
+          candidate_id,
+          scoring_version,
+          input_hash,
+          source_authority_score,
+          confidence_score,
+          newsworthiness_score,
+          seo_opportunity_score,
+          trend_score,
+          quick_hit_score,
+          primary_video_score,
+          component_breakdown,
+          input_snapshot
+        ) values (
+          ${scoreRunId},
+          ${assignedCandidateId},
+          'scoring_v1',
+          ${"a".repeat(64)},
+          70,
+          65,
+          55,
+          50,
+          0,
+          45,
+          60,
+          '{}'::jsonb,
+          '{}'::jsonb
+        )
+      `;
+      await sql`
+        insert into public.discovery_score_overrides (
+          id, score_run_id, candidate_id, metric, original_score, override_score, editor_id, reason
+        ) values (
+          ${scoreOverrideId}, ${scoreRunId}, ${assignedCandidateId}, 'CONFIDENCE', 65, 70, ${profiles.editor},
+          'A fixture used to prove score overrides are immutable.'
+        )
       `;
 
       const cases: PolicyCase[] = [
@@ -785,6 +827,131 @@ async function main() {
                 'This direct audit insert must be rejected.'
               )
               returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "authors can read score history for assigned candidates",
+          userId: authUsers.author,
+          expected: "ALLOW",
+          action: async (testSql) => (await testSql`select id from public.discovery_score_runs where id = ${scoreRunId}`).length === 1,
+        },
+        {
+          label: "anonymous users cannot read discovery score history",
+          apiRole: "anon",
+          expected: "DENY",
+          action: async (testSql) => (await testSql`select id from public.discovery_score_runs where id = ${scoreRunId}`).length > 0,
+        },
+        {
+          label: "authors cannot override discovery scores",
+          userId: authUsers.author,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              insert into public.discovery_score_overrides (
+                score_run_id, candidate_id, metric, original_score, override_score, editor_id, reason
+              ) values (
+                ${scoreRunId}, ${assignedCandidateId}, 'CONFIDENCE', 65, 80, ${profiles.author},
+                'An unauthorized author score override attempt.'
+              ) returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "fact checkers cannot override discovery scores",
+          userId: authUsers.factChecker,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              insert into public.discovery_score_overrides (
+                score_run_id, candidate_id, metric, original_score, override_score, editor_id, reason
+              ) values (
+                ${scoreRunId}, ${assignedCandidateId}, 'CONFIDENCE', 65, 80, ${profiles.factChecker},
+                'An unauthorized fact-checker score override attempt.'
+              ) returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "editors can append attributed score overrides",
+          userId: authUsers.editor,
+          expected: "ALLOW",
+          action: async (testSql) => (
+            await testSql`
+              insert into public.discovery_score_overrides (
+                score_run_id, candidate_id, metric, original_score, override_score, editor_id, reason
+              ) values (
+                ${scoreRunId}, ${assignedCandidateId}, 'CONFIDENCE', 65, 72, ${profiles.editor},
+                'A documented editorial confidence adjustment.'
+              ) returning id
+            `
+          ).length === 1,
+        },
+        {
+          label: "editors cannot rewrite the automated original score",
+          userId: authUsers.editor,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              insert into public.discovery_score_overrides (
+                score_run_id, candidate_id, metric, original_score, override_score, editor_id, reason
+              ) values (
+                ${scoreRunId}, ${assignedCandidateId}, 'CONFIDENCE', 99, 72, ${profiles.editor},
+                'A mismatched original score must be rejected.'
+              ) returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "editors cannot spoof score-override attribution",
+          userId: authUsers.editor,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              insert into public.discovery_score_overrides (
+                score_run_id, candidate_id, metric, original_score, override_score, editor_id, reason
+              ) values (
+                ${scoreRunId}, ${assignedCandidateId}, 'CONFIDENCE', 65, 72, ${profiles.admin},
+                'An attempted score-override attribution spoof.'
+              ) returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "score override history cannot be rewritten through the direct API",
+          userId: authUsers.editor,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              update public.discovery_score_overrides
+              set override_score = 99
+              where id = ${scoreOverrideId}
+              returning id
+            `
+          ).length > 0,
+        },
+        {
+          label: "score override history cannot be deleted through the direct API",
+          userId: authUsers.admin,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`delete from public.discovery_score_overrides where id = ${scoreOverrideId} returning id`
+          ).length > 0,
+        },
+        {
+          label: "editors cannot create automated score runs through the direct API",
+          userId: authUsers.editor,
+          expected: "DENY",
+          action: async (testSql) => (
+            await testSql`
+              insert into public.discovery_score_runs (
+                candidate_id, scoring_version, input_hash, source_authority_score, confidence_score,
+                newsworthiness_score, seo_opportunity_score, trend_score, quick_hit_score,
+                primary_video_score, component_breakdown, input_snapshot
+              ) values (
+                ${assignedCandidateId}, 'scoring_v1', ${"b".repeat(64)}, 70, 65, 55, 50, 0, 45, 60,
+                '{}'::jsonb, '{}'::jsonb
+              ) returning id
             `
           ).length > 0,
         },
