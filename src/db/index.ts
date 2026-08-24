@@ -4,21 +4,10 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import * as schema from "./schema";
+import { configuredDatabaseUrl, databaseUrl } from "./connection-url";
 
 export function isDatabaseConfigured() {
-  return Boolean(process.env.POSTGRES_URL_NON_POOLING ?? process.env.POSTGRES_URL);
-}
-
-function databaseUrl() {
-  // Prefer Supabase's session-pool endpoint. postgres-js can safely pipeline
-  // newsroom reads there, while the transaction endpoint can stall under a
-  // burst of related statements.
-  const url = process.env.POSTGRES_URL_NON_POOLING ?? process.env.POSTGRES_URL;
-
-  // Git Previews intentionally do not receive Production's Supabase secrets.
-  // postgres-js connects lazily, and all credential-optional public queries
-  // return a safe empty result before this local fail-closed URL can be used.
-  return url ?? "postgres://preview_disabled:preview_disabled@127.0.0.1:1/preview_disabled";
+  return Boolean(configuredDatabaseUrl());
 }
 
 const globalDatabase = globalThis as typeof globalThis & {
@@ -28,8 +17,8 @@ const globalDatabase = globalThis as typeof globalThis & {
 const sqlClient =
   globalDatabase.gtaviworldSql ??
   postgres(databaseUrl(), {
-    // Supabase's transaction pool is most reliable here when each server
-    // instance queues work through a single connection.
+    // Prefer Supabase's pooled POSTGRES_URL for Vercel build and runtime
+    // connectivity, while retaining POSTGRES_URL_NON_POOLING as a fallback.
     max: 1,
     idle_timeout: 20,
     connect_timeout: 10,
