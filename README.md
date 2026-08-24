@@ -76,6 +76,11 @@ execution, and prevents overlapping discovery cycles with an expiring database
 lock. No drafting, publishing, paid AI, analytics, or public indexing is enabled
 by the scheduler configuration.
 
+Scheduled publishing is a separate default-off capability. Its endpoint requires
+both valid cron authentication and `SCHEDULED_PUBLISHING_ENABLED=true`; the
+discovery gate cannot enable publishing, and the publishing gate cannot enable
+discovery. Keep the publishing variable unset until a separately approved launch.
+
 ## Pre-launch feature gates
 
 The following public environment variables default to off. Enable them only

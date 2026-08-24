@@ -1,24 +1,25 @@
-import { timingSafeEqual } from "node:crypto";
-
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 
 import { sqlClient } from "@/db";
+import { cronRequestAuthorized } from "@/lib/discovery/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-function validSecret(request: Request, expected: string) {
-  const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  const suppliedBuffer = Buffer.from(supplied);
-  const expectedBuffer = Buffer.from(expected);
-  return suppliedBuffer.length === expectedBuffer.length && timingSafeEqual(suppliedBuffer, expectedBuffer);
+export function scheduledPublishingEnabled() {
+  return process.env.SCHEDULED_PUBLISHING_ENABLED === "true";
 }
 
 export async function POST(request: Request) {
+  if (!scheduledPublishingEnabled()) {
+    return NextResponse.json({ error: "Scheduled publishing is disabled." }, { status: 503 });
+  }
+
   const secret = process.env.CRON_SECRET;
-  if (!secret) return NextResponse.json({ error: "Scheduled publishing is not activated." }, { status: 503 });
-  if (!validSecret(request, secret)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!cronRequestAuthorized(request.headers.get("authorization"), secret)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const published = await sqlClient<Array<{ id: string; urlPath: string }>>`
     update public.stories
