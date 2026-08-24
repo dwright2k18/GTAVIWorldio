@@ -22,6 +22,7 @@ import {
   tags,
   videos,
 } from "@/db/schema";
+import { readPublicCmsWithBuildFallback } from "@/lib/cms/public-build-resilience";
 
 const liveStoryStatuses = ["PUBLISHED", "UPDATED"] as const;
 
@@ -32,7 +33,7 @@ function liveStoryWhere() {
   );
 }
 
-export async function getPublishedStoryBySlug(slug: string) {
+async function queryPublishedStoryBySlug(slug: string) {
   if (!isDatabaseConfigured()) return null;
   const [record] = await db
     .select({
@@ -90,7 +91,14 @@ export async function getPublishedStoryBySlug(slug: string) {
   return { ...record, tags: tagRows, relatedStories: relatedRows, relatedVideos: videoRows, evergreenLinks: evergreenRows, corrections: correctionRows, sources: sourceRows };
 }
 
-export async function getEditorialRedirect(path: string) {
+export function getPublishedStoryBySlug(slug: string) {
+  return readPublicCmsWithBuildFallback(
+    () => queryPublishedStoryBySlug(slug),
+    () => null,
+  );
+}
+
+async function queryEditorialRedirect(path: string) {
   if (!isDatabaseConfigured()) return null;
   const [record] = await db
     .select({ newPath: redirects.newPath, statusCode: redirects.statusCode })
@@ -98,6 +106,13 @@ export async function getEditorialRedirect(path: string) {
     .where(and(eq(redirects.oldPath, path.toLowerCase()), eq(redirects.isActive, true)))
     .limit(1);
   return record ?? null;
+}
+
+export function getEditorialRedirect(path: string) {
+  return readPublicCmsWithBuildFallback(
+    () => queryEditorialRedirect(path),
+    () => null,
+  );
 }
 
 export type CmsSearchResult = {
@@ -112,7 +127,7 @@ export type CmsSearchResult = {
   rank: number;
 };
 
-export async function searchPublishedCms(query: string) {
+async function queryPublishedCms(query: string) {
   if (!isDatabaseConfigured()) return [];
   const normalized = query.replace(/\s+/g, " ").trim().slice(0, 160);
   if (normalized.length < 2) return [];
@@ -153,7 +168,14 @@ export async function searchPublishedCms(query: string) {
   `;
 }
 
-export async function listPublishedArchive(page = 1, pageSize = 20) {
+export function searchPublishedCms(query: string) {
+  return readPublicCmsWithBuildFallback<CmsSearchResult[]>(
+    () => queryPublishedCms(query),
+    () => [],
+  );
+}
+
+async function queryPublishedArchive(page = 1, pageSize = 20) {
   if (!isDatabaseConfigured()) return [];
   const safePage = Math.max(1, Math.floor(page));
   const safeSize = Math.min(50, Math.max(1, Math.floor(pageSize)));
@@ -178,7 +200,14 @@ export async function listPublishedArchive(page = 1, pageSize = 20) {
     .offset((safePage - 1) * safeSize);
 }
 
-export async function listSitemapRecords() {
+export function listPublishedArchive(page = 1, pageSize = 20) {
+  return readPublicCmsWithBuildFallback(
+    () => queryPublishedArchive(page, pageSize),
+    () => [],
+  );
+}
+
+async function querySitemapRecords() {
   if (!isDatabaseConfigured()) return { stories: [], evergreen: [], authors: [] };
   const storyRows = await db.select({ path: stories.urlPath, updatedAt: stories.meaningfullyUpdatedAt, publishedAt: stories.publishedAt, robotsOverride: stories.robotsOverride }).from(stories).where(liveStoryWhere());
   const evergreenRows = await db.select({ path: evergreenPages.path, updatedAt: evergreenPages.meaningfullyUpdatedAt, publishedAt: evergreenPages.publishedAt, robotsOverride: evergreenPages.robotsOverride }).from(evergreenPages).where(eq(evergreenPages.status, "PUBLISHED"));
@@ -186,7 +215,14 @@ export async function listSitemapRecords() {
   return { stories: storyRows, evergreen: evergreenRows, authors: authorRows };
 }
 
-export async function getPublicAuthor(slug: string) {
+export function listSitemapRecords() {
+  return readPublicCmsWithBuildFallback(
+    querySitemapRecords,
+    () => ({ stories: [], evergreen: [], authors: [] }),
+  );
+}
+
+async function queryPublicAuthor(slug: string) {
   if (!isDatabaseConfigured()) return null;
   const [author] = await db.select().from(authors).where(and(eq(authors.slug, slug.toLowerCase()), eq(authors.isActive, true))).limit(1);
   if (!author) return null;
@@ -198,7 +234,14 @@ export async function getPublicAuthor(slug: string) {
   return history.length ? { author, stories: history } : null;
 }
 
-export async function getPublishedEvergreenByPath(path: string) {
+export function getPublicAuthor(slug: string) {
+  return readPublicCmsWithBuildFallback(
+    () => queryPublicAuthor(slug),
+    () => null,
+  );
+}
+
+async function queryPublishedEvergreenByPath(path: string) {
   if (!isDatabaseConfigured()) return null;
   const [page] = await db
     .select({ page: evergreenPages, author: authors })
@@ -213,4 +256,11 @@ export async function getPublishedEvergreenByPath(path: string) {
   const revisionRows = await db.select({ id: evergreenRevisions.id, fieldsChanged: evergreenRevisions.fieldsChanged, changeReason: evergreenRevisions.changeReason, createdAt: evergreenRevisions.createdAt }).from(evergreenRevisions).where(eq(evergreenRevisions.evergreenPageId, page.page.id)).orderBy(desc(evergreenRevisions.createdAt)).limit(10);
 
   return { ...page, sources: sourceRows, relatedStories: storyRows, updateHistory: revisionRows };
+}
+
+export function getPublishedEvergreenByPath(path: string) {
+  return readPublicCmsWithBuildFallback(
+    () => queryPublishedEvergreenByPath(path),
+    () => null,
+  );
 }
