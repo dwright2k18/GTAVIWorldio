@@ -39,6 +39,11 @@ import {
   reserveDailyCandidateSlot,
 } from "./budgets";
 import { connectorFailureState, CONNECTOR_FAILURE_THRESHOLD } from "./failure-policy";
+import {
+  connectorCadenceDecision,
+  nextScheduledConnectorCheck,
+  scheduledDueAfterConnectorFailure,
+} from "./cadence";
 
 type IngestionMode = "TEST_ONLY" | "MANUAL_TEST" | "RECURRING";
 
@@ -123,16 +128,28 @@ export async function runDiscoverySource(
       });
       return { status: "CIRCUIT_OPEN" as const, candidates: [] };
     }
-    if (source.nextCheckAt && source.nextCheckAt > new Date()) {
+    const cadence = connectorCadenceDecision({
+      nextCheckAt: source.nextCheckAt,
+      lastCheckedAt: source.lastCheckedAt,
+      now: new Date(),
+    });
+    if (!cadence.due) {
       await db.insert(sourceFetchRuns).values({
         sourceId: source.id,
         status: "SKIPPED",
         requestCount: 0,
         completedAt: new Date(),
-        errorCode: "MINIMUM_INTERVAL",
-        errorMessage: "The configured minimum check interval has not elapsed.",
+        errorCode: cadence.reason,
+        errorMessage: cadence.reason === "RECENT_ATTEMPT"
+          ? "A recent connector attempt already handled this Cron delivery window."
+          : "The configured connector cadence is not due yet.",
       });
-      return { status: "MINIMUM_INTERVAL" as const, candidates: [] };
+      return {
+        status: cadence.reason === "RECENT_ATTEMPT"
+          ? "DUPLICATE_DELIVERY" as const
+          : "MINIMUM_INTERVAL" as const,
+        candidates: [],
+      };
     }
 
     const oneHourAgo = new Date(Date.now() - 3_600_000);
@@ -706,7 +723,14 @@ export async function runDiscoverySource(
       lastError: result.health === "DEGRADED" ? result.warnings.join(" ").slice(0, 2_000) : null,
       consecutiveFailures: 0,
       circuitOpenUntil: null,
-      nextCheckAt: new Date(persistedAt.valueOf() + source.minCheckIntervalMinutes * 60_000),
+      nextCheckAt: options.mode === "RECURRING"
+        ? nextScheduledConnectorCheck({
+            previousScheduledDueAt: source.nextCheckAt,
+            runStartedAt: startedAt,
+            completedAt: persistedAt,
+            intervalMinutes: source.minCheckIntervalMinutes,
+          })
+        : new Date(persistedAt.valueOf() + source.minCheckIntervalMinutes * 60_000),
     }).where(eq(monitoredSources.id, source.id));
     if (options.mode === "MANUAL_TEST") {
       await db.insert(discoveryAuditLogs).values({
@@ -788,6 +812,7 @@ export async function runDiscoverySource(
       lastError: message,
       consecutiveFailures: failure.consecutiveFailures,
       circuitOpenUntil: failure.circuitOpenUntil,
+      nextCheckAt: scheduledDueAfterConnectorFailure(source.nextCheckAt),
     }).where(eq(monitoredSources.id, source.id));
     await db.insert(discoveryAuditLogs).values({
       actorType: "AUTOMATION",
