@@ -57,6 +57,13 @@
       "when": 1787443200000,
       "tag": "0007_phase_4_3_scheduler_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787587200000,
+      "tag": "0008_phase_4_4_request_optimization",
+      "breakpoints": true
     }
   ]
 }

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { classifyMeaningfulChange, meaningfulContentHash } from "@/lib/discovery/change-detection";
-import { shouldCreateCandidateForSnapshot } from "@/lib/discovery/baseline";
-import { parseFeedItems } from "@/lib/discovery/connectors/feeds";
+import { excludePreviouslySeenItems, shouldCreateCandidateForSnapshot } from "@/lib/discovery/baseline";
+import { detailRefreshDue } from "@/lib/discovery/connectors/cache-policy";
+import { FeedConnector, parseFeedItems } from "@/lib/discovery/connectors/feeds";
 import { HtmlListingConnector, parseHtmlArticle, parseHtmlListing } from "@/lib/discovery/connectors/html";
 import { fetchSourceText } from "@/lib/discovery/connectors/base";
 import { canUseDeepResearch, estimatedMonthlyRequests } from "@/lib/discovery/cost";
@@ -148,6 +149,107 @@ describe("source connectors", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("sends conditional validators and accepts HTTP 304 without reading a body", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 304 }));
+    const result = await fetchSourceText(officialSource, fetcher as typeof fetch, {
+      cache: { etag: '"stable"', lastModified: "Wed, 20 Aug 2026 12:00:00 GMT", contentHash: "known-hash" },
+    });
+    expect(result.notModified).toBe(true);
+    expect(result.responseHash).toBe("known-hash");
+    expect(fetcher.mock.calls[0][1]?.headers).toMatchObject({
+      "If-None-Match": '"stable"',
+      "If-Modified-Since": "Wed, 20 Aug 2026 12:00:00 GMT",
+    });
+  });
+
+  it("short-circuits an unchanged official feed without reparsing old entries", async () => {
+    const source = {
+      ...officialSource,
+      url: "https://www.youtube.com/feeds/videos.xml?channel_id=official",
+      domain: "youtube.com",
+      connectorKind: "ATOM" as const,
+      lastContentHash: "feed-hash",
+      httpCache: {
+        "https://www.youtube.com/feeds/videos.xml?channel_id=official": {
+          etag: '"feed"',
+          contentHash: "feed-hash",
+        },
+      },
+    };
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 304 }));
+    const result = await new FeedConnector().fetch(source, fetcher as typeof fetch);
+    expect(result.items).toEqual([]);
+    expect(result.metrics).toMatchObject({ conditionalRequests: 1, notModifiedResponses: 1, hashUnchangedExits: 1 });
+  });
+
+  it("does not refetch a known detail page during the quiet daily window", async () => {
+    const detailUrl = "https://www.take2games.com/ir/news/gta-vi-update";
+    const source: DiscoverySource = {
+      ...officialSource,
+      domain: "take2games.com",
+      url: "https://www.take2games.com/ir/press-releases",
+      connectorConfig: {
+        linkPrefixes: ["/ir/news/"],
+        includeTerms: ["gta vi"],
+        followDetails: true,
+        requireItems: true,
+      },
+      knownUrls: [detailUrl],
+      lastSuccessfulFetchAt: new Date(),
+    };
+    const fetcher = vi.fn().mockResolvedValue(new Response(`<a href="${detailUrl}">GTA VI official update</a>`, { status: 200 }));
+    const result = await new HtmlListingConnector().fetch(source, fetcher as typeof fetch);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.items).toEqual([]);
+    expect(result.metrics).toMatchObject({ detailFetchesAvoided: 1, knownUrlSkips: 1, requestsSaved: 1 });
+  });
+
+  it("refreshes a known detail page after the daily validation window", async () => {
+    const detailUrl = "https://www.take2games.com/ir/news/gta-vi-update";
+    const source: DiscoverySource = {
+      ...officialSource,
+      domain: "take2games.com",
+      url: "https://www.take2games.com/ir/press-releases",
+      connectorConfig: {
+        linkPrefixes: ["/ir/news/"],
+        includeTerms: ["gta vi"],
+        followDetails: true,
+        requireItems: true,
+      },
+      knownUrls: [detailUrl],
+      lastSuccessfulFetchAt: new Date("2026-08-20T00:00:00Z"),
+    };
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(`<a href="${detailUrl}">GTA VI official update</a>`, { status: 200 }))
+      .mockResolvedValueOnce(new Response(`<head><meta property="og:title" content="GTA VI official update"><meta property="og:description" content="Take-Two confirms stable official Grand Theft Auto VI information."></head>`, { status: 200 }));
+    const result = await new HtmlListingConnector().fetch(source, fetcher as typeof fetch);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(result.metrics?.detailRequests).toBe(1);
+  });
+
+  it("keeps the three-detail hard limit when several new official URLs appear", async () => {
+    const links = Array.from({ length: 5 }, (_, index) =>
+      `<a href="/ir/news/gta-vi-${index}">GTA VI official update ${index}</a>`).join("");
+    const source: DiscoverySource = {
+      ...officialSource,
+      domain: "take2games.com",
+      url: "https://www.take2games.com/ir/press-releases",
+      connectorConfig: {
+        linkPrefixes: ["/ir/news/"],
+        includeTerms: ["gta vi"],
+        followDetails: true,
+        requireItems: true,
+        maxDetailItems: 3,
+      },
+    };
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(links, { status: 200 }))
+      .mockImplementation(async () => new Response(`<head><meta property="og:title" content="GTA VI official update"><meta property="og:description" content="Take-Two confirms official Grand Theft Auto VI information."></head>`, { status: 200 }));
+    const result = await new HtmlListingConnector().fetch(source, fetcher as typeof fetch);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(result.metrics).toMatchObject({ detailRequests: 3, detailFetchesDeferred: 2 });
+  });
+
   it("rejects a redirect to a private target before following it", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 302, headers: { location: "https://127.0.0.1/private" } }));
     await expect(fetchSourceText(officialSource, fetcher as typeof fetch)).rejects.toThrow(/Private/);
@@ -192,6 +294,11 @@ describe("deduplication and change detection", () => {
     expect(shouldCreateCandidateForSnapshot({ connectorKind: "MANUAL", isInitialBaseline: true, wasPreviouslySeen: false })).toBe(true);
   });
 
+  it("excludes unchanged evidence before deterministic scoring", () => {
+    expect(excludePreviouslySeenItems([item, { ...item, contentHash: "new" }], new Set([item.contentHash])))
+      .toEqual([{ ...item, contentHash: "new" }]);
+  });
+
   it("detects exact and likely duplicates", () => {
     const existing = [{ id: "one", canonicalUrl: item.url, normalizedTitle: normalizeHeadline(item.title), contentHash: item.contentHash, sourcePublishedAt: new Date() }];
     expect(assessDuplicate({ canonicalUrl: `${item.url}?utm_source=test`, title: item.title, contentHash: item.contentHash, publishedAt: new Date() }, existing).status).toBe("DUPLICATE");
@@ -229,5 +336,16 @@ describe("safety and cost controls", () => {
     const start = new Date("2026-08-21T00:00:00.000Z");
     expect(discoverySnapshotExpiry(start, 30).toISOString()).toBe("2026-09-20T00:00:00.000Z");
     expect(discoverySnapshotExpiry(start, 999).toISOString()).toBe("2027-08-21T00:00:00.000Z");
+  });
+
+  it("uses a daily validation window for already-known detail pages", () => {
+    expect(detailRefreshDue({
+      cache: { checkedAt: "2026-08-24T12:00:00.000Z" },
+      now: new Date("2026-08-24T17:00:00.000Z"),
+    })).toBe(false);
+    expect(detailRefreshDue({
+      cache: { checkedAt: "2026-08-23T12:00:00.000Z" },
+      now: new Date("2026-08-24T17:00:00.000Z"),
+    })).toBe(true);
   });
 });

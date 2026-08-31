@@ -141,6 +141,17 @@ describe("discovery Cron runtime database safety", () => {
     expect(mocks.releaseLock).toHaveBeenCalledWith("lock-token");
   });
 
+  it("suppresses concurrent attempts to run the same due connector", async () => {
+    mocks.select.mockReturnValueOnce(controlRead(true));
+    mocks.acquireLock.mockResolvedValue(null);
+
+    const response = await GET(request("Bearer runtime-test-secret"));
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({ status: "ALREADY_RUNNING" });
+    expect(mocks.runSource).not.toHaveBeenCalled();
+    expect(mocks.releaseLock).not.toHaveBeenCalled();
+  });
+
   it("releases the lock and avoids connector classification when a database outage occurs", async () => {
     mocks.select
       .mockReturnValueOnce(controlRead(true))

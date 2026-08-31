@@ -15,6 +15,10 @@ import {
 } from "@/lib/discovery/execution-lock";
 import { runDiscoverySource } from "@/lib/discovery/ingestion";
 import { recurringDiscoveryEnabled } from "@/lib/discovery/pipeline";
+import {
+  connectorDueCutoff,
+  connectorDuplicateCutoff,
+} from "@/lib/discovery/cadence";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -173,6 +177,13 @@ async function executeDiscoveryCron() {
 function andActiveAndDue(now: Date) {
   return and(
     eq(monitoredSources.isActive, true),
-    or(isNull(monitoredSources.nextCheckAt), lte(monitoredSources.nextCheckAt, now)),
+    or(
+      isNull(monitoredSources.nextCheckAt),
+      lte(monitoredSources.nextCheckAt, connectorDueCutoff(now)),
+    ),
+    or(
+      isNull(monitoredSources.lastCheckedAt),
+      lte(monitoredSources.lastCheckedAt, connectorDuplicateCutoff(now)),
+    ),
   );
 }

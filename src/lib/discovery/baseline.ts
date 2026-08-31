@@ -7,3 +7,10 @@ export function shouldCreateCandidateForSnapshot(options: {
   if (options.isInitialBaseline && options.connectorKind !== "MANUAL") return false;
   return true;
 }
+
+export function excludePreviouslySeenItems<T extends { contentHash: string }>(
+  items: T[],
+  previousContentHashes: ReadonlySet<string>,
+) {
+  return items.filter((item) => !previousContentHashes.has(item.contentHash));
+}

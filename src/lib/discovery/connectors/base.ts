@@ -1,11 +1,37 @@
-import type { ConnectorResult, DiscoverySource } from "../types";
-import { sha256 } from "../normalize";
+import type {
+  ConnectorMetrics,
+  ConnectorResult,
+  DiscoverySource,
+  SourceHttpCacheEntry,
+} from "../types";
+import { canonicalizeSourceUrl, sha256 } from "../normalize";
 import { assertSafeDiscoveryUrl, discoveryUrlMatchesDomain } from "../safety";
 
 export type DiscoveryFetcher = typeof fetch;
 
 export interface SourceConnector {
   fetch(source: DiscoverySource, fetcher?: DiscoveryFetcher): Promise<ConnectorResult>;
+}
+
+export function emptyConnectorMetrics(
+  overrides: Partial<ConnectorMetrics> = {},
+): ConnectorMetrics {
+  return {
+    listingRequests: 0,
+    detailRequests: 0,
+    conditionalRequests: 0,
+    notModifiedResponses: 0,
+    hashUnchangedExits: 0,
+    detailFetchesAvoided: 0,
+    detailFetchesDeferred: 0,
+    knownUrlSkips: 0,
+    requestsSaved: 0,
+    ...overrides,
+  };
+}
+
+export function sourceHttpCacheEntry(source: DiscoverySource, url: string) {
+  return source.httpCache?.[canonicalizeSourceUrl(url)];
 }
 
 const maximumResponseBytes = 2_000_000;
@@ -18,15 +44,28 @@ export async function fetchSourceText(
   options: {
     url?: string;
     accept?: "HTML" | "FEED";
+    cache?: SourceHttpCacheEntry;
   } = {},
 ) {
   const url = assertSafeDiscoveryUrl(options.url ?? source.url);
+  const cacheKey = canonicalizeSourceUrl(url.toString());
   if (!discoveryUrlMatchesDomain(url.toString(), source.domain)) {
     throw new Error("Configured discovery URL does not match the monitored source domain.");
   }
   const accept = options.accept === "HTML"
     ? "text/html, application/xhtml+xml;q=0.9, application/ld+json;q=0.7, */*;q=0.1"
     : "application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html;q=0.7, */*;q=0.1";
+  const headers: Record<string, string> = {
+    Accept: accept,
+    "User-Agent": "GTAVIWorldio-Discovery/1.0 (+https://gtaviworld.io/about)",
+  };
+  if (options.cache?.etag) headers["If-None-Match"] = options.cache.etag;
+  if (options.cache?.lastModified) {
+    headers["If-Modified-Since"] = options.cache.lastModified;
+  }
+  const conditionalRequest = Boolean(
+    headers["If-None-Match"] || headers["If-Modified-Since"],
+  );
   let totalRequests = 0;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const controller = new AbortController();
@@ -36,10 +75,7 @@ export async function fetchSourceText(
       let retry = false;
       for (let redirectCount = 0; redirectCount <= 3; redirectCount += 1) {
         const response = await fetcher(currentUrl, {
-          headers: {
-            Accept: accept,
-            "User-Agent": "GTAVIWorldio-Discovery/1.0 (+https://gtaviworld.io/about)",
-          },
+          headers,
           redirect: "manual",
           signal: controller.signal,
           cache: "no-store",
@@ -63,6 +99,30 @@ export async function fetchSourceText(
         if (declaredLength > maximumResponseBytes) {
           throw new Error("Source response exceeds the 2 MB discovery limit.");
         }
+        const etag = response.headers.get("etag") ?? options.cache?.etag;
+        const lastModified = response.headers.get("last-modified")
+          ?? options.cache?.lastModified;
+        const checkedAt = new Date().toISOString();
+        if (response.status === 304) {
+          return {
+            finalUrl: currentUrl.toString(),
+            httpStatus: response.status,
+            text: "",
+            responseBytes: 0,
+            responseHash: options.cache?.contentHash ?? sha256(""),
+            contentType: response.headers.get("content-type") ?? "",
+            requestCount: totalRequests,
+            conditionalRequest,
+            notModified: true,
+            cacheKey,
+            cacheUpdate: {
+              ...options.cache,
+              ...(etag ? { etag } : {}),
+              ...(lastModified ? { lastModified } : {}),
+              checkedAt,
+            },
+          };
+        }
         const text = await response.text();
         const responseBytes = new TextEncoder().encode(text).byteLength;
         if (responseBytes > maximumResponseBytes) {
@@ -79,6 +139,16 @@ export async function fetchSourceText(
           responseHash: sha256(text),
           contentType: response.headers.get("content-type") ?? "",
           requestCount: totalRequests,
+          conditionalRequest,
+          notModified: false,
+          cacheKey,
+          cacheUpdate: {
+            ...options.cache,
+            ...(etag ? { etag } : {}),
+            ...(lastModified ? { lastModified } : {}),
+            contentHash: sha256(text),
+            checkedAt,
+          },
         };
       }
       if (retry) continue;

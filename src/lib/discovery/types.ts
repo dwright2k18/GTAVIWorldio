@@ -30,6 +30,27 @@ export type ConnectorItem = {
   metadata: Record<string, unknown>;
 };
 
+export type SourceHttpCacheEntry = {
+  etag?: string;
+  lastModified?: string;
+  contentHash?: string;
+  semanticHash?: string;
+  listingHash?: string;
+  checkedAt?: string;
+};
+
+export type ConnectorMetrics = {
+  listingRequests: number;
+  detailRequests: number;
+  conditionalRequests: number;
+  notModifiedResponses: number;
+  hashUnchangedExits: number;
+  detailFetchesAvoided: number;
+  detailFetchesDeferred: number;
+  knownUrlSkips: number;
+  requestsSaved: number;
+};
+
 export type ExtractionMethod =
   | "STRUCTURED_FEED"
   | "JSON_LD"
@@ -54,6 +75,8 @@ export type ConnectorResult = {
   health: "HEALTHY" | "DEGRADED" | "FAILED";
   lastContentHash?: string;
   warnings: string[];
+  cacheUpdates?: Record<string, SourceHttpCacheEntry>;
+  metrics?: ConnectorMetrics;
 };
 
 export type DiscoverySource = Pick<
@@ -71,7 +94,15 @@ export type DiscoverySource = Pick<
   | "rateLimitPerHour"
   | "minCheckIntervalMinutes"
   | "termsPolicyNotes"
->;
+> & {
+  healthStatus?: "NOT_CHECKED" | "HEALTHY" | "DEGRADED" | "FAILED" | "PAUSED" | "CIRCUIT_OPEN";
+  lastContentHash?: string | null;
+  lastExtractionMethod?: string | null;
+  lastCheckedAt?: Date | null;
+  lastSuccessfulFetchAt?: Date | null;
+  httpCache?: Record<string, SourceHttpCacheEntry>;
+  knownUrls?: string[];
+};
 
 export type DiscoverySignals = {
   independentSourceCount?: number;

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -37,5 +38,11 @@ describe("migration integrity normalization", () => {
       [{ hash: "one" }, { hash: "two" }],
       [{ hash: "two" }, { hash: "one" }],
     )).toBe(false);
+  });
+
+  it("keeps the request-optimization migration limited to inert cache storage", () => {
+    const sql = readFileSync("drizzle/0008_phase_4_4_request_optimization.sql", "utf8");
+    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS http_cache jsonb NOT NULL DEFAULT/);
+    expect(sql).not.toMatch(/is_active|recurring_monitoring_enabled|publish|schedule|indexable/i);
   });
 });

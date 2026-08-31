@@ -37,6 +37,28 @@ function candidateVisibleToEditor(
   );
 }
 
+function runConnectorMetric(
+  run: typeof sourceFetchRuns.$inferSelect,
+  key: string,
+) {
+  const connectorMetrics = run.metadata?.connectorMetrics;
+  if (!connectorMetrics || typeof connectorMetrics !== "object" || Array.isArray(connectorMetrics)) return 0;
+  const value = (connectorMetrics as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function optimizationMetrics(runs: Array<typeof sourceFetchRuns.$inferSelect>) {
+  const total = (key: string) => runs.reduce((sum, run) => sum + runConnectorMetric(run, key), 0);
+  return {
+    conditionalRequests: total("conditionalRequests"),
+    notModifiedResponses: total("notModifiedResponses"),
+    hashUnchangedExits: total("hashUnchangedExits"),
+    detailFetchesAvoided: total("detailFetchesAvoided"),
+    knownUrlSkips: total("knownUrlSkips"),
+    requestsSaved: total("requestsSaved"),
+  };
+}
+
 export async function getDiscoveryDashboard(editor: EditorProfile) {
   const candidateRows = await db
     .select({
@@ -111,6 +133,10 @@ export async function getDiscoveryDashboard(editor: EditorProfile) {
       failures: runs.filter((run) => run.status === "FAILED").length,
       rateLimits: runs.filter((run) => run.errorCode?.includes("RATE_LIMIT")).length,
       averageResponseMs: runs.length ? Math.round(runs.reduce((sum, run) => sum + run.durationMs, 0) / runs.length) : 0,
+      averageRequestsPerRun: runs.length
+        ? Number((runs.reduce((sum, run) => sum + run.requestCount, 0) / runs.length).toFixed(2))
+        : 0,
+      ...optimizationMetrics(runs),
     };
   });
   const connectorMetrics = {
@@ -126,6 +152,10 @@ export async function getDiscoveryDashboard(editor: EditorProfile) {
     averageResponseMs: completedRuns.length
       ? Math.round(completedRuns.reduce((sum, run) => sum + run.durationMs, 0) / completedRuns.length)
       : 0,
+    averageRequestsPerRun: completedRuns.length
+      ? Number((completedRuns.reduce((sum, run) => sum + run.requestCount, 0) / completedRuns.length).toFixed(2))
+      : 0,
+    ...optimizationMetrics(completedRuns),
   };
 
   return {

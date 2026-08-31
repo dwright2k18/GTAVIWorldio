@@ -17,6 +17,7 @@
     "discovery:test": "tsx scripts/test-discovery-connectors.ts",
     "discovery:official-test": "node --env-file=.env.development.local --conditions=react-server --import tsx scripts/test-official-source-connectors.ts",
     "discovery:score-replay": "tsx scripts/replay-phase-4-2-scoring.ts",
+    "discovery:soak-report": "tsx scripts/report-official-soak.ts",
     "scheduler:db-test": "tsx scripts/test-scheduler-hardening.ts",
     "runtime:db-test": "node --conditions=react-server --import tsx scripts/test-runtime-database.ts"
   },
