@@ -9,6 +9,7 @@ const adminNavigation = [
   ["Dashboard", "/admin"],
   ["Stories", "/admin/stories"],
   ["Discovery", "/admin/discovery"],
+  ["AI newsroom", "/admin/ai"],
   ["Evergreen", "/admin/evergreen"],
   ["Sources", "/admin/sources"],
   ["Taxonomy", "/admin/taxonomy"],

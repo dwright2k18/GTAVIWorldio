@@ -6,6 +6,10 @@ import {
   migrationHashesMatch,
   normalizedMigrationHash,
 } from "./lib/migration-integrity";
+import {
+  validateActiveOfficialSourceGaps,
+  type ActiveOfficialSourceGapAlert,
+} from "./lib/database-alert-safety";
 
 config({ path: ".env.development.local", quiet: true });
 
@@ -46,7 +50,7 @@ async function main() {
       candidate_evidence_count: number;
       discovery_score_runs: number;
       discovery_score_overrides: number;
-      official_source_gap_alerts: number;
+      official_source_gap_alerts: ActiveOfficialSourceGapAlert[];
       source_health: Array<{
         id: string;
         name: string;
@@ -93,7 +97,22 @@ async function main() {
       ,(select count(*)::int from public.candidate_evidence where candidate_id = '70db3fc3-0671-4824-80b4-6682ac6d7b76') as candidate_evidence_count
       ,(select count(*)::int from public.discovery_score_runs) as discovery_score_runs
       ,(select count(*)::int from public.discovery_score_overrides) as discovery_score_overrides
-      ,(select count(*)::int from public.discovery_alerts where alert_type = 'OFFICIAL_SOURCE_GAP' and status in ('NEW', 'ACKNOWLEDGED')) as official_source_gap_alerts
+      ,(select coalesce(json_agg(json_build_object(
+        'id', alert.id,
+        'alertType', alert.alert_type,
+        'sourceId', alert.source_id,
+        'sourceUrl', source.url,
+        'detail', alert.detail,
+        'evidenceUrls', coalesce((
+          select json_agg(evidence.source_url order by evidence.source_url)
+          from public.candidate_evidence evidence
+          where evidence.source_id = alert.source_id
+        ), '[]'::json)
+      ) order by alert.created_at), '[]'::json)
+      from public.discovery_alerts alert
+      left join public.monitored_sources source on source.id = alert.source_id
+      where alert.alert_type = 'OFFICIAL_SOURCE_GAP'
+        and alert.status in ('NEW', 'ACKNOWLEDGED')) as official_source_gap_alerts
       ,(select coalesce(json_agg(json_build_object(
         'id', id,
         'name', name,
@@ -132,13 +151,23 @@ async function main() {
     const migrationLedger = await client<Array<{ id: number; hash: string }>>`
       select id, hash from drizzle.__drizzle_migrations order by id
     `;
-    const hashesMatch = migrationHashesMatch(expectedMigrations, migrationLedger);
+    const appliedExpectedMigrations = expectedMigrations.slice(0, migrationLedger.length);
+    const pendingMigrations = expectedMigrations.slice(migrationLedger.length).map(({ tag }) => tag);
+    const hashesMatch = migrationHashesMatch(appliedExpectedMigrations, migrationLedger);
+    const pendingMigrationsAreExpected = pendingMigrations.length === 1 && pendingMigrations[0] === "0009_phase_5_ai_newsroom";
     const latestMigration = expectedMigrations.at(-1)?.tag ?? null;
+
+    const sourceGapValidation = validateActiveOfficialSourceGaps(
+      counts.official_source_gap_alerts,
+    );
 
     console.log(JSON.stringify({
       ...counts,
+      official_source_gap_alert_validation: sourceGapValidation,
       migrations: migrationLedger.length,
       latest_migration: latestMigration,
+      pending_migrations: pendingMigrations,
+      pending_migrations_are_expected: pendingMigrationsAreExpected,
       migration_hashes_match: hashesMatch,
     }, null, 2));
 
@@ -158,7 +187,7 @@ async function main() {
       counts.test_candidates !== 0 ||
       counts.discovery_score_runs !== 1 ||
       counts.discovery_score_overrides !== 0 ||
-      counts.official_source_gap_alerts !== 0 ||
+      !sourceGapValidation.valid ||
       counts.discovery_settings !== 1 ||
       !counts.recurring_monitoring_enabled ||
       counts.automatic_drafting_enabled ||
@@ -172,8 +201,9 @@ async function main() {
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000003")?.min_check_interval_minutes !== 360 ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000004")?.min_check_interval_minutes !== 360 ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000009")?.min_check_interval_minutes !== 120 ||
-      expectedMigrations.length !== 9 ||
-      migrationLedger.length !== expectedMigrations.length ||
+      expectedMigrations.length !== 10 ||
+      migrationLedger.length !== 9 ||
+      !pendingMigrationsAreExpected ||
       !hashesMatch
     ) {
       throw new Error("Database safety checks did not match the expected limited official-source pilot state.");

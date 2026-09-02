@@ -211,6 +211,49 @@ export const discoveryActorTypeEnum = pgEnum("discovery_actor_type", [
   "AUTOMATION",
 ]);
 
+export const aiGenerationKindEnum = pgEnum("ai_generation_kind", [
+  "RESEARCH_PACKET",
+  "ARTICLE_DRAFT",
+  "SEO_PACKAGE",
+  "PRIMARY_VIDEO",
+  "QUICK_HIT",
+]);
+
+export const aiGenerationStatusEnum = pgEnum("ai_generation_status", [
+  "REQUESTED",
+  "RUNNING",
+  "SUCCEEDED",
+  "FAILED",
+  "CANCELLED",
+  "BUDGET_EXHAUSTED",
+  "DISABLED",
+]);
+
+export const aiClaimReviewStatusEnum = pgEnum("ai_claim_review_status", [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "NEEDS_REVIEW",
+]);
+
+export const aiDraftStatusEnum = pgEnum("ai_draft_status", [
+  "DRAFTING",
+  "FACT_CHECK",
+  "NEEDS_REVIEW",
+  "APPROVED",
+  "REJECTED",
+]);
+
+export const aiAttributionModeEnum = pgEnum("ai_attribution_mode", [
+  "DIRECT_QUOTE",
+  "PARAPHRASE",
+]);
+
+export const aiContentPackageKindEnum = pgEnum("ai_content_package_kind", [
+  "PRIMARY_VIDEO",
+  "QUICK_HIT",
+]);
+
 export type ArticleBodyBlock =
   | { type: "paragraph"; content: string }
   | { type: "heading"; level: 2 | 3; content: string }
@@ -1353,6 +1396,360 @@ export const discoveryUsageDaily = pgTable(
   (table) => [index("discovery_usage_updated_idx").on(table.updatedAt)],
 );
 
+export const aiProviderSettings = pgTable("ai_provider_settings", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  providerCode: text("provider_code"),
+  researchModel: text("research_model"),
+  draftingModel: text("drafting_model"),
+  inputPriceMicrosPerMillion: integer("input_price_micros_per_million")
+    .notNull()
+    .default(0),
+  outputPriceMicrosPerMillion: integer("output_price_micros_per_million")
+    .notNull()
+    .default(0),
+  structuredOutputRequired: boolean("structured_output_required").notNull().default(true),
+  webAccessEnabled: boolean("web_access_enabled").notNull().default(false),
+  isEnabled: boolean("is_enabled").notNull().default(false),
+  emergencyStop: boolean("emergency_stop").notNull().default(true),
+  dailyCallLimit: integer("daily_call_limit").notNull().default(0),
+  dailyInputTokenLimit: integer("daily_input_token_limit").notNull().default(0),
+  dailyOutputTokenLimit: integer("daily_output_token_limit").notNull().default(0),
+  dailyCostLimitMicros: integer("daily_cost_limit_micros").notNull().default(0),
+  perCandidateCallLimit: integer("per_candidate_call_limit").notNull().default(0),
+  perCandidateCostLimitMicros: integer("per_candidate_cost_limit_micros")
+    .notNull()
+    .default(0),
+  maxRegenerations: integer("max_regenerations").notNull().default(0),
+  requestTimeoutMs: integer("request_timeout_ms").notNull().default(60_000),
+  retryLimit: integer("retry_limit").notNull().default(0),
+  updatedBy: uuid("updated_by").references(() => editorProfiles.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const aiGenerations = pgTable(
+  "ai_generations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id").references(() => stories.id, {
+      onDelete: "set null",
+    }),
+    kind: aiGenerationKindEnum("kind").notNull(),
+    status: aiGenerationStatusEnum("status").notNull().default("REQUESTED"),
+    providerCode: text("provider_code"),
+    modelId: text("model_id"),
+    promptVersion: text("prompt_version").notNull(),
+    inputEvidenceHash: text("input_evidence_hash").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestedBy: uuid("requested_by")
+      .notNull()
+      .references(() => editorProfiles.id, { onDelete: "restrict" }),
+    requestedReason: text("requested_reason").notNull(),
+    cancellationRequested: boolean("cancellation_requested")
+      .notNull()
+      .default(false),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    schemaValidationPassed: boolean("schema_validation_passed")
+      .notNull()
+      .default(false),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    estimatedCostMicros: integer("estimated_cost_micros").notNull().default(0),
+    actualCostMicros: integer("actual_cost_micros"),
+    reservedInputTokens: integer("reserved_input_tokens").notNull().default(0),
+    reservedOutputTokens: integer("reserved_output_tokens").notNull().default(0),
+    reservedCostMicros: integer("reserved_cost_micros").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ai_generations_idempotency_uidx").on(table.idempotencyKey),
+    index("ai_generations_candidate_date_idx").on(
+      table.candidateId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const aiResearchPackets = pgTable(
+  "ai_research_packets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    generationId: uuid("generation_id")
+      .notNull()
+      .references(() => aiGenerations.id, { onDelete: "restrict" }),
+    version: integer("version").notNull().default(1),
+    packet: jsonb("packet").$type<Record<string, unknown>>().notNull(),
+    approvedClaimsHash: text("approved_claims_hash"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => editorProfiles.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ai_research_packets_candidate_version_uidx").on(
+      table.candidateId,
+      table.version,
+    ),
+  ],
+);
+
+export const aiClaims = pgTable(
+  "ai_claims",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    packetId: uuid("packet_id")
+      .notNull()
+      .references(() => aiResearchPackets.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    claimKey: text("claim_key").notNull(),
+    claimText: text("claim_text").notNull(),
+    evidenceRecordIds: uuid("evidence_record_ids").array().notNull(),
+    sourceUrl: text("source_url").notNull(),
+    sourceType: sourceTypeEnum("source_type").notNull(),
+    attributionMode: aiAttributionModeEnum("attribution_mode").notNull(),
+    confidence: integer("confidence").notNull(),
+    verificationStatus: verificationStatusEnum("verification_status").notNull(),
+    contradictionStatus: text("contradiction_status")
+      .notNull()
+      .default("NONE"),
+    reviewStatus: aiClaimReviewStatusEnum("review_status")
+      .notNull()
+      .default("PENDING"),
+    includedInDraft: boolean("included_in_draft").notNull().default(false),
+    reviewedBy: uuid("reviewed_by").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+    reviewReason: text("review_reason"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ai_claims_packet_key_uidx").on(table.packetId, table.claimKey),
+    index("ai_claims_candidate_review_idx").on(
+      table.candidateId,
+      table.reviewStatus,
+    ),
+  ],
+);
+
+export const aiQuoteRecords = pgTable("ai_quote_records", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  packetId: uuid("packet_id")
+    .notNull()
+    .references(() => aiResearchPackets.id, { onDelete: "cascade" }),
+  claimId: uuid("claim_id")
+    .notNull()
+    .references(() => aiClaims.id, { onDelete: "cascade" }),
+  candidateId: uuid("candidate_id")
+    .notNull()
+    .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+  evidenceId: uuid("evidence_id")
+    .notNull()
+    .references(() => candidateEvidence.id, { onDelete: "restrict" }),
+  exactText: text("exact_text").notNull(),
+  speakerOrganization: text("speaker_organization").notNull(),
+  originalSource: text("original_source").notNull(),
+  sourceUrl: text("source_url").notNull(),
+  sourceDate: timestamp("source_date", { withTimezone: true }),
+  locator: text("locator"),
+  context: text("context").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const aiArticleDrafts = pgTable(
+  "ai_article_drafts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    packetId: uuid("packet_id")
+      .notNull()
+      .references(() => aiResearchPackets.id, { onDelete: "restrict" }),
+    generationId: uuid("generation_id")
+      .notNull()
+      .references(() => aiGenerations.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").references(() => stories.id, {
+      onDelete: "set null",
+    }),
+    version: integer("version").notNull().default(1),
+    status: aiDraftStatusEnum("status").notNull().default("DRAFTING"),
+    draft: jsonb("draft").$type<Record<string, unknown>>().notNull(),
+    groundingPassed: boolean("grounding_passed").notNull().default(false),
+    groundingFindings: jsonb("grounding_findings")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default([]),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => editorProfiles.id, { onDelete: "restrict" }),
+    updatedBy: uuid("updated_by")
+      .notNull()
+      .references(() => editorProfiles.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ai_article_drafts_candidate_version_uidx").on(
+      table.candidateId,
+      table.version,
+    ),
+  ],
+);
+
+export const aiSeoPackages = pgTable("ai_seo_packages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  candidateId: uuid("candidate_id")
+    .notNull()
+    .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+  draftId: uuid("draft_id")
+    .notNull()
+    .references(() => aiArticleDrafts.id, { onDelete: "cascade" }),
+  generationId: uuid("generation_id")
+    .notNull()
+    .references(() => aiGenerations.id, { onDelete: "restrict" }),
+  originalSuggestion: jsonb("original_suggestion")
+    .$type<Record<string, unknown>>()
+    .notNull(),
+  editorOverride: jsonb("editor_override").$type<Record<string, unknown>>(),
+  overrideBy: uuid("override_by").references(() => editorProfiles.id, {
+    onDelete: "set null",
+  }),
+  overrideReason: text("override_reason"),
+  overrideAt: timestamp("override_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const aiContentPackages = pgTable(
+  "ai_content_packages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    draftId: uuid("draft_id")
+      .notNull()
+      .references(() => aiArticleDrafts.id, { onDelete: "cascade" }),
+    generationId: uuid("generation_id")
+      .notNull()
+      .references(() => aiGenerations.id, { onDelete: "restrict" }),
+    kind: aiContentPackageKindEnum("kind").notNull(),
+    targetDurationSeconds: integer("target_duration_seconds").notNull(),
+    content: jsonb("content").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ai_content_packages_draft_kind_uidx").on(
+      table.draftId,
+      table.kind,
+    ),
+  ],
+);
+
+export const aiCostLedger = pgTable(
+  "ai_cost_ledger",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    generationId: uuid("generation_id")
+      .notNull()
+      .references(() => aiGenerations.id, { onDelete: "restrict" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "restrict" }),
+    usageDate: text("usage_date").notNull(),
+    providerCode: text("provider_code").notNull(),
+    modelId: text("model_id").notNull(),
+    inputTokens: integer("input_tokens").notNull(),
+    outputTokens: integer("output_tokens").notNull(),
+    estimatedCostMicros: integer("estimated_cost_micros").notNull(),
+    actualCostMicros: integer("actual_cost_micros"),
+    costMicros: integer("cost_micros").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ai_cost_ledger_generation_uidx").on(table.generationId),
+    index("ai_cost_ledger_date_idx").on(table.usageDate),
+  ],
+);
+
+export const aiAuditLogs = pgTable(
+  "ai_audit_logs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    generationId: uuid("generation_id").references(() => aiGenerations.id, {
+      onDelete: "set null",
+    }),
+    candidateId: uuid("candidate_id").references(
+      () => discoveryCandidates.id,
+      { onDelete: "set null" },
+    ),
+    draftId: uuid("draft_id").references(() => aiArticleDrafts.id, {
+      onDelete: "set null",
+    }),
+    actorId: uuid("actor_id").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+    action: text("action").notNull(),
+    reason: text("reason").notNull(),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("ai_audit_candidate_date_idx").on(table.candidateId, table.createdAt),
+    index("ai_audit_action_idx").on(table.action),
+  ],
+);
+
 export type StoryRecord = typeof stories.$inferSelect;
 export type NewStoryRecord = typeof stories.$inferInsert;
 export type EditorProfile = typeof editorProfiles.$inferSelect;
@@ -1360,3 +1757,7 @@ export type MonitoredSource = typeof monitoredSources.$inferSelect;
 export type DiscoveryCandidate = typeof discoveryCandidates.$inferSelect;
 export type StoryCluster = typeof storyClusters.$inferSelect;
 export type DiscoveryScoreRun = typeof discoveryScoreRuns.$inferSelect;
+export type AiProviderSettings = typeof aiProviderSettings.$inferSelect;
+export type AiGeneration = typeof aiGenerations.$inferSelect;
+export type AiResearchPacket = typeof aiResearchPackets.$inferSelect;
+export type AiArticleDraft = typeof aiArticleDrafts.$inferSelect;
