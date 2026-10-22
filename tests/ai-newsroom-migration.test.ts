@@ -42,6 +42,18 @@ describe("Phase 5A additive migration safety", () => {
     expect(sql).toContain("pg_advisory_xact_lock");
     expect(sql).toMatch(/greatest\(input_tokens, reserved_input_tokens\)/);
     expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.reserve_ai_generation[\s\S]*FROM anon, authenticated/);
+    expect(sql).toContain("validate_ai_candidate_consistency");
+    expect(sql).toMatch(/profile\.role = 'AUTHOR' AND candidate\.assigned_to = profile\.id/);
+    expect(sql).not.toContain("SELECT public.can_read_discovery_candidate(target_candidate_id)");
+  });
+
+  it("preserves human SEO attribution and marks superseded packages stale", () => {
+    expect(sql).toMatch(/override_by uuid REFERENCES public\.editor_profiles\(id\) ON DELETE RESTRICT/);
+    expect(sql).toMatch(/is_stale boolean NOT NULL DEFAULT false/);
+    expect(sql).toContain("ai_seo_packages_stale_reason_check");
+    expect(sql).toContain("ai_content_packages_stale_reason_check");
+    expect(sql).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS ai_content_packages_current_draft_kind_uidx[\s\S]*WHERE is_stale = false/);
+    expect(sql).not.toContain("ai_content_packages_draft_kind_unique");
   });
 
   it("does not touch Production discovery, publishing, analytics, or indexing controls", () => {
@@ -49,9 +61,23 @@ describe("Phase 5A additive migration safety", () => {
     expect(sql).not.toMatch(/NEXT_PUBLIC_SITE_INDEXABLE|Search Console|analytics/i);
   });
 
-  it("keeps the Phase 5A migration pending in Production database checks", () => {
+  it("allows only the reviewed pending or fully applied Phase 5A migration states", () => {
     const check = readFileSync("scripts/check-database.ts", "utf8");
     expect(check).toContain('pendingMigrations[0] === "0009_phase_5_ai_newsroom"');
-    expect(check).toMatch(/migrationLedger\.length !== 9/);
+    expect(check).toContain("pendingMigrations.length === 0");
+    expect(check).toContain("migrationLedger.length <= expectedMigrations.length");
+    expect(check).not.toMatch(/migrationLedger\.length !== 9/);
+    expect(check).not.toMatch(/discovery_candidates !== 1/);
+    expect(check).not.toMatch(/discovery_score_runs !== 1/);
+    expect(check).toContain("counts.non_ai_rls_tables !== 32");
+    expect(check).toContain("counts.rls_tables !== counts.non_ai_rls_tables + counts.ai_rls_tables");
+  });
+
+  it("serializes Phase 5A mutations and revalidates provider snapshots before storage", () => {
+    const actions = readFileSync("src/app/admin/(protected)/ai/actions.ts", "utf8");
+    expect(actions.match(/for update/g)?.length).toBeGreaterThanOrEqual(8);
+    expect(actions).toContain("evidenceHash(currentClaims) !== input.approvedClaimsHash");
+    expect(actions).toContain("evidenceHash(currentDraft.draft) !== input.latestDraftHash");
+    expect(actions).toContain("The research packet or draft changed while the package was being generated.");
   });
 });

@@ -52,8 +52,23 @@ export interface AiGenerationRepository {
   }): Promise<void>;
 }
 
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? "null" : serialized;
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${canonicalJson(entryValue)}`);
+  return `{${entries.join(",")}}`;
+}
+
 export function evidenceHash(evidence: unknown) {
-  return createHash("sha256").update(JSON.stringify(evidence)).digest("hex");
+  return createHash("sha256").update(canonicalJson(evidence)).digest("hex");
 }
 
 export async function runManualStructuredGeneration<T>(options: {

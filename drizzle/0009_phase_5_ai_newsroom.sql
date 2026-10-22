@@ -300,15 +300,18 @@ CREATE TABLE IF NOT EXISTS public.ai_seo_packages (
   generation_id uuid NOT NULL REFERENCES public.ai_generations(id) ON DELETE RESTRICT,
   original_suggestion jsonb NOT NULL,
   editor_override jsonb,
-  override_by uuid REFERENCES public.editor_profiles(id) ON DELETE SET NULL,
+  override_by uuid REFERENCES public.editor_profiles(id) ON DELETE RESTRICT,
   override_reason text,
   override_at timestamp with time zone,
+  is_stale boolean NOT NULL DEFAULT false,
+  stale_reason text,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT ai_seo_packages_override_attribution_check CHECK (
     (editor_override IS NULL AND override_by IS NULL AND override_reason IS NULL AND override_at IS NULL)
     OR (editor_override IS NOT NULL AND override_by IS NOT NULL AND char_length(btrim(override_reason)) >= 8 AND override_at IS NOT NULL)
-  )
+  ),
+  CONSTRAINT ai_seo_packages_stale_reason_check CHECK (is_stale = false OR char_length(btrim(stale_reason)) >= 8)
 );
 --> statement-breakpoint
 
@@ -320,13 +323,20 @@ CREATE TABLE IF NOT EXISTS public.ai_content_packages (
   kind public.ai_content_package_kind NOT NULL,
   target_duration_seconds integer NOT NULL,
   content jsonb NOT NULL,
+  is_stale boolean NOT NULL DEFAULT false,
+  stale_reason text,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT ai_content_packages_duration_check CHECK (
     (kind = 'PRIMARY_VIDEO' AND target_duration_seconds BETWEEN 61 AND 90)
     OR (kind = 'QUICK_HIT' AND target_duration_seconds = 13)
   ),
-  CONSTRAINT ai_content_packages_draft_kind_unique UNIQUE (draft_id, kind)
+  CONSTRAINT ai_content_packages_stale_reason_check CHECK (is_stale = false OR char_length(btrim(stale_reason)) >= 8)
 );
+--> statement-breakpoint
+
+CREATE UNIQUE INDEX IF NOT EXISTS ai_content_packages_current_draft_kind_uidx
+ON public.ai_content_packages(draft_id, kind)
+WHERE is_stale = false;
 --> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS public.ai_cost_ledger (
@@ -422,6 +432,89 @@ CREATE TRIGGER ai_quote_records_validate_provenance BEFORE INSERT OR UPDATE ON p
   FOR EACH ROW EXECUTE FUNCTION public.validate_ai_quote_provenance();
 --> statement-breakpoint
 
+CREATE OR REPLACE FUNCTION public.validate_ai_candidate_consistency()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'ai_research_packets' AND NOT EXISTS (
+    SELECT 1 FROM public.ai_generations generation
+    WHERE generation.id = NEW.generation_id AND generation.candidate_id = NEW.candidate_id
+  ) THEN
+    RAISE EXCEPTION 'Research packet generation must belong to the same candidate';
+  ELSIF TG_TABLE_NAME = 'ai_claims' AND NOT EXISTS (
+    SELECT 1 FROM public.ai_research_packets packet
+    WHERE packet.id = NEW.packet_id AND packet.candidate_id = NEW.candidate_id
+  ) THEN
+    RAISE EXCEPTION 'Claim packet must belong to the same candidate';
+  ELSIF TG_TABLE_NAME = 'ai_quote_records' AND NOT EXISTS (
+    SELECT 1
+    FROM public.ai_research_packets packet
+    JOIN public.ai_claims claim ON claim.id = NEW.claim_id AND claim.packet_id = packet.id
+    WHERE packet.id = NEW.packet_id
+      AND packet.candidate_id = NEW.candidate_id
+      AND claim.candidate_id = NEW.candidate_id
+  ) THEN
+    RAISE EXCEPTION 'Quote, claim, and packet must belong to the same candidate';
+  ELSIF TG_TABLE_NAME = 'ai_article_drafts' AND NOT EXISTS (
+    SELECT 1
+    FROM public.ai_research_packets packet
+    JOIN public.ai_generations generation ON generation.id = NEW.generation_id
+    WHERE packet.id = NEW.packet_id
+      AND packet.candidate_id = NEW.candidate_id
+      AND generation.candidate_id = NEW.candidate_id
+  ) THEN
+    RAISE EXCEPTION 'Article draft packet and generation must belong to the same candidate';
+  ELSIF TG_TABLE_NAME IN ('ai_seo_packages', 'ai_content_packages') AND NOT EXISTS (
+    SELECT 1
+    FROM public.ai_article_drafts draft
+    JOIN public.ai_generations generation ON generation.id = NEW.generation_id
+    WHERE draft.id = NEW.draft_id
+      AND draft.candidate_id = NEW.candidate_id
+      AND generation.candidate_id = NEW.candidate_id
+  ) THEN
+    RAISE EXCEPTION 'Package draft and generation must belong to the same candidate';
+  ELSIF TG_TABLE_NAME = 'ai_cost_ledger' AND NOT EXISTS (
+    SELECT 1 FROM public.ai_generations generation
+    WHERE generation.id = NEW.generation_id AND generation.candidate_id = NEW.candidate_id
+  ) THEN
+    RAISE EXCEPTION 'Cost ledger generation must belong to the same candidate';
+  ELSIF TG_TABLE_NAME = 'ai_audit_logs' AND (
+    (NEW.generation_id IS NOT NULL AND (
+      NEW.candidate_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM public.ai_generations generation
+        WHERE generation.id = NEW.generation_id AND generation.candidate_id = NEW.candidate_id
+      )
+    ))
+    OR (NEW.draft_id IS NOT NULL AND (
+      NEW.candidate_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM public.ai_article_drafts draft
+        WHERE draft.id = NEW.draft_id AND draft.candidate_id = NEW.candidate_id
+      )
+    ))
+  ) THEN
+    RAISE EXCEPTION 'Audit references must belong to the same candidate';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.validate_ai_candidate_consistency() FROM PUBLIC;
+CREATE TRIGGER ai_research_packets_candidate_consistency BEFORE INSERT OR UPDATE ON public.ai_research_packets
+  FOR EACH ROW EXECUTE FUNCTION public.validate_ai_candidate_consistency();
+CREATE TRIGGER ai_claims_candidate_consistency BEFORE INSERT OR UPDATE ON public.ai_claims
+  FOR EACH ROW EXECUTE FUNCTION public.validate_ai_candidate_consistency();
+CREATE TRIGGER ai_quote_records_candidate_consistency BEFORE INSERT OR UPDATE ON public.ai_quote_records
+  FOR EACH ROW EXECUTE FUNCTION public.validate_ai_candidate_consistency();
+CREATE TRIGGER ai_article_drafts_candidate_consistency BEFORE INSERT OR UPDATE ON public.ai_article_drafts
+  FOR EACH ROW EXECUTE FUNCTION public.validate_ai_candidate_consistency();
+CREATE TRIGGER ai_seo_packages_candidate_consistency BEFORE INSERT OR UPDATE ON public.ai_seo_packages
+  FOR EACH ROW EXECUTE FUNCTION public.validate_ai_candidate_consistency();
+CREATE TRIGGER ai_content_packages_candidate_consistency BEFORE INSERT OR UPDATE ON public.ai_content_packages
+  FOR EACH ROW EXECUTE FUNCTION public.validate_ai_candidate_consistency();
+CREATE TRIGGER ai_cost_ledger_candidate_consistency BEFORE INSERT OR UPDATE ON public.ai_cost_ledger
+  FOR EACH ROW EXECUTE FUNCTION public.validate_ai_candidate_consistency();
+CREATE TRIGGER ai_audit_logs_candidate_consistency BEFORE INSERT OR UPDATE ON public.ai_audit_logs
+  FOR EACH ROW EXECUTE FUNCTION public.validate_ai_candidate_consistency();
+--> statement-breakpoint
+
 CREATE OR REPLACE FUNCTION public.prevent_ai_ledger_mutation()
 RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
 BEGIN
@@ -437,7 +530,17 @@ CREATE TRIGGER ai_audit_logs_immutable BEFORE UPDATE OR DELETE ON public.ai_audi
 
 CREATE OR REPLACE FUNCTION public.can_read_ai_candidate(target_candidate_id uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
-  SELECT public.can_read_discovery_candidate(target_candidate_id);
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.editor_profiles profile
+    JOIN public.discovery_candidates candidate ON candidate.id = target_candidate_id
+    WHERE profile.auth_user_id = auth.uid()
+      AND profile.is_active = true
+      AND (
+        profile.role IN ('OWNER', 'ADMIN', 'EDITOR', 'FACT_CHECKER')
+        OR (profile.role = 'AUTHOR' AND candidate.assigned_to = profile.id)
+      )
+  );
 $$;
 REVOKE ALL ON FUNCTION public.can_read_ai_candidate(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.can_read_ai_candidate(uuid) TO authenticated;

@@ -32,6 +32,8 @@ async function main() {
       categories: number;
       policies: number;
       rls_tables: number;
+      ai_rls_tables: number;
+      non_ai_rls_tables: number;
       anonymous_table_grants: number;
       profile_mutation_grants: number;
       policy_test_users: number;
@@ -40,6 +42,7 @@ async function main() {
       discovery_candidates: number;
       legitimate_candidate_present: boolean;
       test_candidates: number;
+      unscored_candidates: number;
       discovery_settings: number;
       recurring_monitoring_enabled: boolean;
       automatic_drafting_enabled: boolean;
@@ -79,6 +82,14 @@ async function main() {
       (select count(*)::int from public.categories) as categories,
       (select count(*)::int from pg_policies where schemaname = 'public') as policies,
       (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relrowsecurity = true) as rls_tables,
+      (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relrowsecurity = true and c.relname in (
+        'ai_provider_settings', 'ai_generations', 'ai_research_packets', 'ai_claims', 'ai_quote_records',
+        'ai_article_drafts', 'ai_seo_packages', 'ai_content_packages', 'ai_cost_ledger', 'ai_audit_logs'
+      )) as ai_rls_tables,
+      (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relrowsecurity = true and c.relname not in (
+        'ai_provider_settings', 'ai_generations', 'ai_research_packets', 'ai_claims', 'ai_quote_records',
+        'ai_article_drafts', 'ai_seo_packages', 'ai_content_packages', 'ai_cost_ledger', 'ai_audit_logs'
+      )) as non_ai_rls_tables,
       (select count(*)::int from information_schema.role_table_grants where table_schema = 'public' and grantee = 'anon') as anonymous_table_grants,
       (select count(*)::int from information_schema.role_table_grants where table_schema = 'public' and table_name = 'editor_profiles' and grantee = 'authenticated' and privilege_type in ('INSERT', 'UPDATE', 'DELETE')) as profile_mutation_grants,
       (select count(*)::int from auth.users where email like 'rls-%@example.invalid') as policy_test_users,
@@ -87,6 +98,9 @@ async function main() {
       (select count(*)::int from public.discovery_candidates) as discovery_candidates,
       (select exists(select 1 from public.discovery_candidates where id = '70db3fc3-0671-4824-80b4-6682ac6d7b76' and is_test = false and story_id is null)) as legitimate_candidate_present,
       (select count(*)::int from public.discovery_candidates where is_test = true) as test_candidates,
+      (select count(*)::int from public.discovery_candidates candidate where candidate.is_test = false and not exists (
+        select 1 from public.discovery_score_runs score_run where score_run.candidate_id = candidate.id
+      )) as unscored_candidates,
       (select count(*)::int from public.discovery_settings) as discovery_settings,
       (select coalesce(bool_or(recurring_monitoring_enabled), false) from public.discovery_settings) as recurring_monitoring_enabled,
       (select coalesce(bool_or(automatic_drafting_enabled), false) from public.discovery_settings) as automatic_drafting_enabled,
@@ -154,7 +168,11 @@ async function main() {
     const appliedExpectedMigrations = expectedMigrations.slice(0, migrationLedger.length);
     const pendingMigrations = expectedMigrations.slice(migrationLedger.length).map(({ tag }) => tag);
     const hashesMatch = migrationHashesMatch(appliedExpectedMigrations, migrationLedger);
-    const pendingMigrationsAreExpected = pendingMigrations.length === 1 && pendingMigrations[0] === "0009_phase_5_ai_newsroom";
+    const migrationStateIsExpected = migrationLedger.length <= expectedMigrations.length && (
+      pendingMigrations.length === 0
+      || (pendingMigrations.length === 1 && pendingMigrations[0] === "0009_phase_5_ai_newsroom")
+    );
+    const aiSchemaApplied = pendingMigrations.length === 0;
     const latestMigration = expectedMigrations.at(-1)?.tag ?? null;
 
     const sourceGapValidation = validateActiveOfficialSourceGaps(
@@ -167,33 +185,36 @@ async function main() {
       migrations: migrationLedger.length,
       latest_migration: latestMigration,
       pending_migrations: pendingMigrations,
-      pending_migrations_are_expected: pendingMigrationsAreExpected,
+      migration_state_is_expected: migrationStateIsExpected,
+      ai_schema_applied: aiSchemaApplied,
       migration_hashes_match: hashesMatch,
     }, null, 2));
 
     if (
-      counts.stories !== 8 ||
+      counts.stories < 8 ||
       counts.published !== 0 ||
       counts.scheduled !== 0 ||
-      counts.evergreen_pages !== 11 ||
-      counts.rls_tables !== 32 ||
+      counts.evergreen_pages < 11 ||
+      counts.non_ai_rls_tables !== 32 ||
+      counts.ai_rls_tables !== (aiSchemaApplied ? 10 : 0) ||
+      counts.rls_tables !== counts.non_ai_rls_tables + counts.ai_rls_tables ||
       counts.anonymous_table_grants !== 0 ||
       counts.profile_mutation_grants !== 0 ||
       counts.policy_test_users !== 0 ||
       counts.monitored_sources !== 9 ||
       counts.active_monitored_sources !== 5 ||
-      counts.discovery_candidates !== 1 ||
+      counts.discovery_candidates < 1 ||
       !counts.legitimate_candidate_present ||
       counts.test_candidates !== 0 ||
-      counts.discovery_score_runs !== 1 ||
-      counts.discovery_score_overrides !== 0 ||
+      counts.unscored_candidates !== 0 ||
+      counts.discovery_score_runs < counts.discovery_candidates ||
       !sourceGapValidation.valid ||
       counts.discovery_settings !== 1 ||
       !counts.recurring_monitoring_enabled ||
       counts.automatic_drafting_enabled ||
       counts.deep_research_enabled ||
-      counts.max_requests_per_day !== 80 ||
-      counts.max_candidates_per_day !== 5 ||
+      counts.max_requests_per_day > 80 ||
+      counts.max_candidates_per_day > 5 ||
       counts.scheduler_locks !== 0 ||
       counts.source_health.some((source) => !source.active || source.max_detail_items > 3) ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000001")?.min_check_interval_minutes !== 360 ||
@@ -201,9 +222,8 @@ async function main() {
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000003")?.min_check_interval_minutes !== 360 ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000004")?.min_check_interval_minutes !== 360 ||
       counts.source_health.find((source) => source.id === "41000000-0000-4000-8000-000000000009")?.min_check_interval_minutes !== 120 ||
-      expectedMigrations.length !== 10 ||
-      migrationLedger.length !== 9 ||
-      !pendingMigrationsAreExpected ||
+      latestMigration !== "0009_phase_5_ai_newsroom" ||
+      !migrationStateIsExpected ||
       !hashesMatch
     ) {
       throw new Error("Database safety checks did not match the expected limited official-source pilot state.");

@@ -3,11 +3,16 @@ import { describe, expect, it, vi } from "vitest";
 import { aiPermissionDenial } from "@/lib/auth/ai-permissions";
 import { estimatedCandidateCosts } from "@/lib/ai/cost";
 import { evaluateAiBudget, evaluateCandidateEligibility } from "@/lib/ai/eligibility";
-import { validateDraftGrounding } from "@/lib/ai/grounding";
-import { runManualStructuredGeneration, type AiGenerationRepository } from "@/lib/ai/pipeline";
+import {
+  validateDraftGrounding,
+  validatePrimaryVideoGrounding,
+  validateQuickHitGrounding,
+} from "@/lib/ai/grounding";
+import { evidenceHash, runManualStructuredGeneration, type AiGenerationRepository } from "@/lib/ai/pipeline";
 import { NEWSROOM_SYSTEM_RULES, serializeSourceData } from "@/lib/ai/prompts";
 import {
   articleDraftSchema,
+  primaryVideoPackageSchema,
   quickHitPackageSchema,
   researchClaimSchema,
 } from "@/lib/ai/schemas";
@@ -88,6 +93,11 @@ describe("Phase 5A eligibility and cost gates", () => {
 });
 
 describe("Phase 5A manual generation", () => {
+  it("hashes semantically identical objects deterministically", () => {
+    expect(evidenceHash({ b: 1, a: { d: 2, c: 3 } }))
+      .toBe(evidenceHash({ a: { c: 3, d: 2 }, b: 1 }));
+  });
+
   it("persists a reservation before a deterministic provider call and audits completion", async () => {
     const order: string[] = [];
     const repository: AiGenerationRepository = {
@@ -202,7 +212,7 @@ describe("Phase 5A manual generation", () => {
 describe("Phase 5A grounding and private workflow", () => {
   const claim = researchClaimSchema.parse({
     claimId: "claim-1",
-    claimText: "Rockstar announced the update on August 27, 2026.",
+    claimText: "Rockstar announced the Grand Theft Auto VI update on August 27, 2026.",
     evidenceRecordIds: [evidenceId],
     sourceUrl: "https://www.rockstargames.com/newswire/article/example",
     sourceType: "FIRST_PARTY",
@@ -215,14 +225,14 @@ describe("Phase 5A grounding and private workflow", () => {
   });
   const validDraft = articleDraftSchema.parse({
     status: "DRAFTING",
-    workingHeadline: "Rockstar shares an official Grand Theft Auto VI update",
-    dek: "The first-party announcement provides a verified look at the update.",
-    summary: "Rockstar announced the update on August 27, 2026.",
+    workingHeadline: "Rockstar announced the Grand Theft Auto VI update on August 27, 2026.",
+    dek: "Rockstar announced the Grand Theft Auto VI update on August 27, 2026.",
+    summary: "Rockstar announced the Grand Theft Auto VI update on August 27, 2026.",
     verificationStatus: "CONFIRMED",
-    introduction: [{ text: "Rockstar announced the update on August 27, 2026.", claimIds: ["claim-1"] }],
-    bodySections: [{ heading: "What happened", paragraphs: [{ text: "Rockstar announced the update on August 27, 2026.", claimIds: ["claim-1"] }] }],
-    whyItMatters: [{ text: "The official update gives readers primary-source context.", claimIds: ["claim-1"] }],
-    confirmedFacts: [{ text: "Rockstar announced the update on August 27, 2026.", claimIds: ["claim-1"] }],
+    introduction: [{ text: "Rockstar announced the Grand Theft Auto VI update on August 27, 2026.", claimIds: ["claim-1"] }],
+    bodySections: [{ heading: "Rockstar announced the Grand Theft Auto VI update on August 27, 2026.", paragraphs: [{ text: "Rockstar announced the Grand Theft Auto VI update on August 27, 2026.", claimIds: ["claim-1"] }] }],
+    whyItMatters: [{ text: "Rockstar announced the Grand Theft Auto VI update on August 27, 2026.", claimIds: ["claim-1"] }],
+    confirmedFacts: [{ text: "Rockstar announced the Grand Theft Auto VI update on August 27, 2026.", claimIds: ["claim-1"] }],
     necessaryContext: [], limitations: [], sourceEvidenceIds: [evidenceId], relatedEvergreenPath: "/trailers", relatedStoryIds: [], relatedVideoIds: [], authorAttribution: "GTAVIWorldio newsroom", proposedPublishedAt: null, proposedUpdatedAt: null, correctionsReady: true,
   });
 
@@ -232,6 +242,61 @@ describe("Phase 5A grounding and private workflow", () => {
     const result = validateDraftGrounding(invalid, [claim], []);
     expect(result.passed).toBe(false);
     expect(result.findings.map(({ code }) => code)).toEqual(expect.arrayContaining(["QUOTE_WITHOUT_PROVENANCE", "UNSUPPORTED_DATE"]));
+  });
+
+  it("blocks unrelated prose even when it cites an approved claim", () => {
+    const unrelated = {
+      ...validDraft,
+      introduction: [{ text: "The reveal broke every streaming record.", claimIds: ["claim-1"] }],
+    };
+    const result = validateDraftGrounding(unrelated, [claim], []);
+    expect(result.passed).toBe(false);
+    expect(result.findings).toContainEqual(expect.objectContaining({ code: "UNSUPPORTED_STATEMENT", location: "introduction.0" }));
+  });
+
+  it("does not erase negation or modal words during exact grounding", () => {
+    const affirmative = researchClaimSchema.parse({
+      ...claim,
+      claimText: "Rockstar has confirmed Grand Theft Auto VI for PC.",
+    });
+    const negated = {
+      ...validDraft,
+      introduction: [{ text: "Rockstar has not confirmed Grand Theft Auto VI for PC.", claimIds: ["claim-1"] }],
+    };
+    expect(validateDraftGrounding(negated, [affirmative], []).findings)
+      .toContainEqual(expect.objectContaining({ code: "UNSUPPORTED_STATEMENT", location: "introduction.0" }));
+  });
+
+  it("accepts an exact stored quotation with approved-claim provenance", () => {
+    const quoted = {
+      ...validDraft,
+      introduction: [{ text: `“${claim.claimText}”`, claimIds: ["claim-1"] }],
+    };
+    const result = validateDraftGrounding(quoted, [claim], [{ exactText: claim.claimText, claimId: "claim-1", evidenceId }]);
+    expect(result.passed).toBe(true);
+  });
+
+  it("uses the weakest referenced claim when checking verification strength", () => {
+    const rumor = researchClaimSchema.parse({
+      ...claim,
+      claimId: "claim-rumor",
+      claimText: "A second detail remains an unconfirmed report.",
+      verificationStatus: "RUMOR",
+    });
+    const mixed = {
+      ...validDraft,
+      necessaryContext: [{ text: rumor.claimText, claimIds: [rumor.claimId] }],
+    };
+    const result = validateDraftGrounding(mixed, [claim, rumor], []);
+    expect(result.findings).toContainEqual(expect.objectContaining({ code: "VERIFICATION_OVERSTATEMENT" }));
+  });
+
+  it("rejects draft evidence IDs that are not attached to referenced claims", () => {
+    const result = validateDraftGrounding({
+      ...validDraft,
+      sourceEvidenceIds: ["92000000-0000-4000-8000-000000000001"],
+    }, [claim], []);
+    expect(result.findings.map(({ code }) => code)).toEqual(expect.arrayContaining(["UNKNOWN_EVIDENCE", "MISSING_CLAIM_EVIDENCE"]));
   });
 
   it("keeps every AI workflow state below approval and publication", () => {
@@ -259,6 +324,54 @@ describe("Phase 5A grounding and private workflow", () => {
     };
     expect(quickHitPackageSchema.parse(base).targetDurationSeconds).toBe(13);
     expect(() => quickHitPackageSchema.parse({ ...base, targetDurationSeconds: 14 })).toThrow();
+    expect(validateQuickHitGrounding(quickHitPackageSchema.parse({
+      ...base,
+      timeline: [
+        { startSecond: 0, endSecond: 2, purpose: "HOOK", voiceover: claim.claimText, claimIds: ["claim-1"] },
+        { startSecond: 2, endSecond: 10, purpose: "FACTUAL_PAYOFF", voiceover: claim.claimText, claimIds: ["claim-1"] },
+        { startSecond: 10, endSecond: 13, purpose: "QUESTION_OR_LOOP", voiceover: "What stood out to you?", claimIds: ["claim-1"] },
+      ],
+      onScreenText: [claim.claimText],
+      caption: claim.claimText,
+      platformTitleVariants: { tiktok: claim.claimText, youtubeShorts: claim.claimText, instagram: claim.claimText, facebook: claim.claimText },
+      relatedPrimaryVideoIdea: claim.claimText,
+    }), [claim]).passed).toBe(true);
+    expect(validateQuickHitGrounding(quickHitPackageSchema.parse({
+      ...base,
+      timeline: [
+        { startSecond: 0, endSecond: 2, purpose: "HOOK", voiceover: "Lucia broke every streaming record.", claimIds: ["claim-1"] },
+        { startSecond: 2, endSecond: 10, purpose: "FACTUAL_PAYOFF", voiceover: claim.claimText, claimIds: ["claim-1"] },
+        { startSecond: 10, endSecond: 13, purpose: "QUESTION_OR_LOOP", voiceover: "What stood out to you?", claimIds: ["claim-1"] },
+      ],
+    }), [claim]).findings).toContainEqual(expect.objectContaining({ code: "UNSUPPORTED_STATEMENT", location: "timeline.0" }));
+  });
+
+  it("rejects unsupported primary-video hooks, narration, and social copy", () => {
+    const packageBase = primaryVideoPackageSchema.parse({
+      targetDurationSeconds: 61,
+      hookOptions: [claim.claimText, claim.claimText, claim.claimText],
+      recommendedHook: claim.claimText,
+      timedVoiceover: [
+        { startSecond: 0, endSecond: 30, text: claim.claimText, claimIds: ["claim-1"] },
+        { startSecond: 30, endSecond: 61, text: claim.claimText, claimIds: ["claim-1"] },
+      ],
+      shotList: [
+        { startSecond: 0, endSecond: 30, visual: { scene: "Official embed", rightsClassification: "OFFICIAL_EMBEDDABLE", sourceUrl: "https://www.rockstargames.com/VI" }, onScreenText: claim.claimText, caption: claim.claimText },
+        { startSecond: 30, endSecond: 61, visual: { scene: "Owned graphic", rightsClassification: "OWNED", sourceUrl: null }, onScreenText: claim.claimText, caption: claim.claimText },
+      ],
+      viewerQuestion: "What stood out to you?",
+      endingStrategy: "End with a reader question.",
+      tiktok: { title: claim.claimText, caption: claim.claimText },
+      youtubeShorts: { title: claim.claimText, description: claim.claimText },
+      instagramCaption: claim.claimText,
+      facebookCaption: claim.claimText,
+      hashtags: ["#GTAVI"],
+    });
+    expect(validatePrimaryVideoGrounding(packageBase, [claim]).passed).toBe(true);
+    const unsupported = { ...packageBase, hookOptions: ["Lucia broke every streaming record.", claim.claimText, claim.claimText] };
+    expect(validatePrimaryVideoGrounding(unsupported, [claim]).findings).toContainEqual(expect.objectContaining({ code: "UNSUPPORTED_STATEMENT", location: "hookOptions.0" }));
+    const unsupportedQuestion = { ...packageBase, viewerQuestion: "What do you think about Rockstar cancelling GTA VI?" };
+    expect(validatePrimaryVideoGrounding(unsupportedQuestion, [claim]).findings).toContainEqual(expect.objectContaining({ code: "UNSUPPORTED_STATEMENT", location: "viewerQuestion" }));
   });
 });
 

@@ -128,9 +128,12 @@ export const researchPacketSchema = z.object({
   quickHitRecommendations: z.array(z.string().min(1).max(300)).max(5),
 });
 
+const groundedClaimIdsSchema = z.array(z.string().min(1).max(100)).min(1).max(10)
+  .refine((claimIds) => new Set(claimIds).size === claimIds.length, "Claim IDs must be unique.");
+
 export const sourcedTextBlockSchema = z.object({
   text: z.string().min(1).max(3_000),
-  claimIds: z.array(z.string().min(1).max(100)).min(1),
+  claimIds: groundedClaimIdsSchema,
 });
 
 export const articleDraftSchema = z.object({
@@ -206,7 +209,7 @@ export const primaryVideoPackageSchema = z.object({
   hookOptions: z.array(z.string().min(1).max(200)).length(3),
   recommendedHook: z.string().min(1).max(200),
   timedVoiceover: z.array(
-    z.object({ startSecond: z.number().min(0), endSecond: z.number().max(90), text: z.string().min(1), claimIds: z.array(z.string()).min(1) }),
+    z.object({ startSecond: z.number().min(0), endSecond: z.number().max(90), text: z.string().min(1), claimIds: groundedClaimIdsSchema }),
   ).min(2),
   shotList: z.array(z.object({ startSecond: z.number().min(0), endSecond: z.number().max(90), visual: visualSuggestionSchema, onScreenText: z.string().max(200), caption: z.string().max(300) })).min(2),
   viewerQuestion: z.string().min(1).max(200),
@@ -221,9 +224,9 @@ export const primaryVideoPackageSchema = z.object({
 export const quickHitPackageSchema = z.object({
   targetDurationSeconds: z.literal(13),
   timeline: z.tuple([
-    z.object({ startSecond: z.literal(0), endSecond: z.literal(2), purpose: z.literal("HOOK"), voiceover: z.string().min(1), claimIds: z.array(z.string()).min(1) }),
-    z.object({ startSecond: z.literal(2), endSecond: z.literal(10), purpose: z.literal("FACTUAL_PAYOFF"), voiceover: z.string().min(1), claimIds: z.array(z.string()).min(1) }),
-    z.object({ startSecond: z.literal(10), endSecond: z.literal(13), purpose: z.literal("QUESTION_OR_LOOP"), voiceover: z.string().min(1), claimIds: z.array(z.string()).min(1) }),
+    z.object({ startSecond: z.literal(0), endSecond: z.literal(2), purpose: z.literal("HOOK"), voiceover: z.string().min(1), claimIds: groundedClaimIdsSchema }),
+    z.object({ startSecond: z.literal(2), endSecond: z.literal(10), purpose: z.literal("FACTUAL_PAYOFF"), voiceover: z.string().min(1), claimIds: groundedClaimIdsSchema }),
+    z.object({ startSecond: z.literal(10), endSecond: z.literal(13), purpose: z.literal("QUESTION_OR_LOOP"), voiceover: z.string().min(1), claimIds: groundedClaimIdsSchema }),
   ]),
   onScreenText: z.array(z.string().min(1).max(160)).min(1).max(5),
   visualSequence: z.array(visualSuggestionSchema).min(1).max(5),

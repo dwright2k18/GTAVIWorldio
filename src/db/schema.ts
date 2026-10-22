@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -1649,10 +1650,12 @@ export const aiSeoPackages = pgTable("ai_seo_packages", {
     .notNull(),
   editorOverride: jsonb("editor_override").$type<Record<string, unknown>>(),
   overrideBy: uuid("override_by").references(() => editorProfiles.id, {
-    onDelete: "set null",
+    onDelete: "restrict",
   }),
   overrideReason: text("override_reason"),
   overrideAt: timestamp("override_at", { withTimezone: true }),
+  isStale: boolean("is_stale").notNull().default(false),
+  staleReason: text("stale_reason"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -1677,15 +1680,17 @@ export const aiContentPackages = pgTable(
     kind: aiContentPackageKindEnum("kind").notNull(),
     targetDurationSeconds: integer("target_duration_seconds").notNull(),
     content: jsonb("content").$type<Record<string, unknown>>().notNull(),
+    isStale: boolean("is_stale").notNull().default(false),
+    staleReason: text("stale_reason"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex("ai_content_packages_draft_kind_uidx").on(
+    uniqueIndex("ai_content_packages_current_draft_kind_uidx").on(
       table.draftId,
       table.kind,
-    ),
+    ).where(sql`${table.isStale} = false`),
   ],
 );
 
