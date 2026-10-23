@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  date,
   index,
   integer,
   jsonb,
@@ -253,6 +254,55 @@ export const aiAttributionModeEnum = pgEnum("ai_attribution_mode", [
 export const aiContentPackageKindEnum = pgEnum("ai_content_package_kind", [
   "PRIMARY_VIDEO",
   "QUICK_HIT",
+]);
+
+export const grokWorkerStatusEnum = pgEnum("grok_worker_status", [
+  "ACTIVE",
+  "DISABLED",
+  "REVOKED",
+]);
+
+export const grokWorkKindEnum = pgEnum("grok_work_kind", [
+  "RESEARCH",
+  "DRAFT",
+  "FACT_CHECK",
+  "SEO",
+  "PRIMARY_VIDEO",
+  "QUICK_HIT",
+  "REVISION",
+]);
+
+export const grokWorkStatusEnum = pgEnum("grok_work_status", [
+  "READY",
+  "LEASED",
+  "VALIDATING",
+  "NEEDS_REVISION",
+  "COMPLETED",
+  "FAILED",
+  "CANCELLED",
+]);
+
+export const grokArtifactKindEnum = pgEnum("grok_artifact_kind", [
+  "RESEARCH_PACKET",
+  "CLAIM_EVIDENCE_MAP",
+  "QUOTE_PROVENANCE",
+  "ARTICLE_DRAFT",
+  "GROUNDING_RESULT",
+  "FACT_CHECK_RESULT",
+  "SEO_PACKAGE",
+  "PRIMARY_VIDEO_PACKAGE",
+  "QUICK_HIT_PACKAGE",
+]);
+
+export const grokSubmissionStatusEnum = pgEnum("grok_submission_status", [
+  "ACCEPTED",
+  "REJECTED",
+]);
+
+export const grokPolicyDecisionEnum = pgEnum("grok_policy_decision", [
+  "BLOCKED",
+  "ELIGIBLE",
+  "PUBLISHED",
 ]);
 
 export type ArticleBodyBlock =
@@ -1755,6 +1805,379 @@ export const aiAuditLogs = pgTable(
   ],
 );
 
+export const grokAutomationControls = pgTable("grok_automation_controls", {
+  singleton: boolean("singleton").primaryKey().default(true),
+  apiEnabled: boolean("api_enabled").notNull().default(false),
+  queueEnabled: boolean("queue_enabled").notNull().default(false),
+  autoPublishEnabled: boolean("auto_publish_enabled").notNull().default(false),
+  emergencyStop: boolean("emergency_stop").notNull().default(true),
+  dailyPublicationCap: integer("daily_publication_cap").notNull().default(0),
+  defaultAuthorId: uuid("default_author_id").references(() => authors.id, {
+    onDelete: "set null",
+  }),
+  updatedBy: uuid("updated_by").references(() => editorProfiles.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const grokWorkers = pgTable(
+  "grok_workers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    status: grokWorkerStatusEnum("status").notNull().default("DISABLED"),
+    environment: text("environment").notNull().default("production"),
+    maxConcurrentLeases: integer("max_concurrent_leases").notNull().default(1),
+    tokenVersion: integer("token_version").notNull().default(1),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("grok_workers_name_environment_uidx").on(
+      table.name,
+      table.environment,
+    ),
+  ],
+);
+
+export const grokWorkerCredentials = pgTable(
+  "grok_worker_credentials",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workerId: uuid("worker_id")
+      .notNull()
+      .references(() => grokWorkers.id, { onDelete: "cascade" }),
+    tokenPrefix: text("token_prefix").notNull().unique(),
+    tokenDigest: text("token_digest").notNull().unique(),
+    scopes: text("scopes").array().notNull().default([]),
+    tokenVersion: integer("token_version").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    rotatedFromId: uuid("rotated_from_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("grok_worker_credentials_worker_idx").on(
+      table.workerId,
+      table.expiresAt,
+    ),
+  ],
+);
+
+export const grokWorkItems = pgTable(
+  "grok_work_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    kind: grokWorkKindEnum("kind").notNull(),
+    status: grokWorkStatusEnum("status").notNull().default("READY"),
+    priority: integer("priority").notNull().default(0),
+    notBefore: timestamp("not_before", { withTimezone: true }).notNull().defaultNow(),
+    inputSnapshotHash: text("input_snapshot_hash").notNull(),
+    revision: integer("revision").notNull().default(1),
+    parentWorkItemId: uuid("parent_work_item_id"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    createdBy: uuid("created_by").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("grok_work_items_candidate_kind_revision_uidx").on(
+      table.candidateId,
+      table.kind,
+      table.revision,
+    ),
+    index("grok_work_items_ready_idx").on(
+      table.status,
+      table.notBefore,
+      table.priority,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const grokWorkLeases = pgTable(
+  "grok_work_leases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => grokWorkItems.id, { onDelete: "cascade" }),
+    workerId: uuid("worker_id")
+      .notNull()
+      .references(() => grokWorkers.id, { onDelete: "restrict" }),
+    credentialId: uuid("credential_id")
+      .notNull()
+      .references(() => grokWorkerCredentials.id, { onDelete: "restrict" }),
+    leaseTokenDigest: text("lease_token_digest").notNull().unique(),
+    leasedAt: timestamp("leased_at", { withTimezone: true }).notNull().defaultNow(),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    releaseReason: text("release_reason"),
+  },
+  (table) => [
+    uniqueIndex("grok_work_leases_active_item_uidx")
+      .on(table.workItemId)
+      .where(sql`${table.releasedAt} is null`),
+    index("grok_work_leases_worker_active_idx").on(
+      table.workerId,
+      table.expiresAt,
+    ),
+  ],
+);
+
+export const grokSubmissions = pgTable(
+  "grok_submissions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => grokWorkItems.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    workerId: uuid("worker_id")
+      .notNull()
+      .references(() => grokWorkers.id, { onDelete: "restrict" }),
+    credentialId: uuid("credential_id")
+      .notNull()
+      .references(() => grokWorkerCredentials.id, { onDelete: "restrict" }),
+    artifactKind: grokArtifactKindEnum("artifact_kind").notNull(),
+    schemaVersion: text("schema_version").notNull(),
+    revision: integer("revision").notNull(),
+    inputSnapshotHash: text("input_snapshot_hash").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: grokSubmissionStatusEnum("status").notNull(),
+    validationFindings: jsonb("validation_findings")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("grok_submissions_credential_idempotency_uidx").on(
+      table.credentialId,
+      table.idempotencyKey,
+    ),
+    uniqueIndex("grok_submissions_work_kind_revision_uidx").on(
+      table.workItemId,
+      table.artifactKind,
+      table.revision,
+    ),
+    index("grok_submissions_candidate_kind_idx").on(
+      table.candidateId,
+      table.artifactKind,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const grokValidationRuns = pgTable(
+  "grok_validation_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    submissionId: uuid("submission_id")
+      .notNull()
+      .references(() => grokSubmissions.id, { onDelete: "cascade" }),
+    validationType: text("validation_type").notNull(),
+    validatorVersion: text("validator_version").notNull(),
+    inputSnapshotHash: text("input_snapshot_hash").notNull(),
+    passed: boolean("passed").notNull(),
+    findings: jsonb("findings")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("grok_validation_submission_type_version_uidx").on(
+      table.submissionId,
+      table.validationType,
+      table.validatorVersion,
+    ),
+  ],
+);
+
+export const grokPublicationDailyCounters = pgTable(
+  "grok_publication_daily_counters",
+  {
+    usageDate: date("usage_date").primaryKey(),
+    publicationCap: integer("publication_cap").notNull().default(0),
+    reservedCount: integer("reserved_count").notNull().default(0),
+    publishedCount: integer("published_count").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export const grokPublicationEvaluations = pgTable(
+  "grok_publication_evaluations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => discoveryCandidates.id, { onDelete: "cascade" }),
+    draftSubmissionId: uuid("draft_submission_id")
+      .notNull()
+      .references(() => grokSubmissions.id, { onDelete: "restrict" }),
+    policyVersion: text("policy_version").notNull(),
+    decision: grokPolicyDecisionEnum("decision").notNull(),
+    allGatesPassed: boolean("all_gates_passed").notNull(),
+    gateSnapshot: jsonb("gate_snapshot")
+      .$type<Record<string, boolean>>()
+      .notNull(),
+    evidenceSnapshotHash: text("evidence_snapshot_hash").notNull(),
+    storyId: uuid("story_id").references(() => stories.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("grok_publication_draft_policy_idx").on(
+      table.draftSubmissionId,
+      table.policyVersion,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const grokIdempotencyRecords = pgTable(
+  "grok_idempotency_records",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    credentialId: uuid("credential_id")
+      .notNull()
+      .references(() => grokWorkerCredentials.id, { onDelete: "cascade" }),
+    routeKey: text("route_key").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    responseStatus: integer("response_status").notNull(),
+    responseBody: jsonb("response_body").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("grok_idempotency_credential_route_key_uidx").on(
+      table.credentialId,
+      table.routeKey,
+      table.idempotencyKey,
+    ),
+    index("grok_idempotency_expiry_idx").on(table.expiresAt),
+  ],
+);
+
+export const grokRateLimitBuckets = pgTable(
+  "grok_rate_limit_buckets",
+  {
+    workerId: uuid("worker_id")
+      .notNull()
+      .references(() => grokWorkers.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    bucketStart: timestamp("bucket_start", { withTimezone: true }).notNull(),
+    requestCount: integer("request_count").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workerId, table.scope, table.bucketStart] }),
+    index("grok_rate_limit_bucket_expiry_idx").on(table.bucketStart),
+  ],
+);
+
+export const grokAuditEvents = pgTable(
+  "grok_audit_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workerId: uuid("worker_id").references(() => grokWorkers.id, {
+      onDelete: "set null",
+    }),
+    credentialId: uuid("credential_id").references(
+      () => grokWorkerCredentials.id,
+      { onDelete: "set null" },
+    ),
+    workItemId: uuid("work_item_id").references(() => grokWorkItems.id, {
+      onDelete: "set null",
+    }),
+    candidateId: uuid("candidate_id").references(() => discoveryCandidates.id, {
+      onDelete: "set null",
+    }),
+    action: text("action").notNull(),
+    requestId: text("request_id").notNull(),
+    requestHash: text("request_hash"),
+    outcome: text("outcome").notNull(),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("grok_audit_events_candidate_date_idx").on(
+      table.candidateId,
+      table.createdAt,
+    ),
+    index("grok_audit_events_worker_date_idx").on(
+      table.workerId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const grokAlerts = pgTable(
+  "grok_alerts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    alertType: text("alert_type").notNull(),
+    severity: text("severity").notNull(),
+    status: text("status").notNull().default("NEW"),
+    workerId: uuid("worker_id").references(() => grokWorkers.id, {
+      onDelete: "set null",
+    }),
+    workItemId: uuid("work_item_id").references(() => grokWorkItems.id, {
+      onDelete: "set null",
+    }),
+    candidateId: uuid("candidate_id").references(() => discoveryCandidates.id, {
+      onDelete: "set null",
+    }),
+    detail: text("detail").notNull(),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: uuid("resolved_by").references(() => editorProfiles.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => [
+    index("grok_alerts_open_idx").on(
+      table.status,
+      table.severity,
+      table.createdAt,
+    ),
+  ],
+);
+
 export type StoryRecord = typeof stories.$inferSelect;
 export type NewStoryRecord = typeof stories.$inferInsert;
 export type EditorProfile = typeof editorProfiles.$inferSelect;
@@ -1766,3 +2189,7 @@ export type AiProviderSettings = typeof aiProviderSettings.$inferSelect;
 export type AiGeneration = typeof aiGenerations.$inferSelect;
 export type AiResearchPacket = typeof aiResearchPackets.$inferSelect;
 export type AiArticleDraft = typeof aiArticleDrafts.$inferSelect;
+export type GrokWorker = typeof grokWorkers.$inferSelect;
+export type GrokWorkerCredential = typeof grokWorkerCredentials.$inferSelect;
+export type GrokWorkItem = typeof grokWorkItems.$inferSelect;
+export type GrokSubmission = typeof grokSubmissions.$inferSelect;
