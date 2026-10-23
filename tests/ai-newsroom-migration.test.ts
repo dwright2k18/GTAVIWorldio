@@ -41,6 +41,7 @@ describe("Phase 5A additive migration safety", () => {
     expect(sql).toContain("reserve_ai_generation");
     expect(sql).toContain("pg_advisory_xact_lock");
     expect(sql).toMatch(/greatest\(input_tokens, reserved_input_tokens\)/);
+    expect(sql).toContain("candidate_regenerations + (CASE WHEN same_kind_exists THEN 1 ELSE 0 END)");
     expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.reserve_ai_generation[\s\S]*FROM anon, authenticated/);
     expect(sql).toContain("validate_ai_candidate_consistency");
     expect(sql).toMatch(/profile\.role = 'AUTHOR' AND candidate\.assigned_to = profile\.id/);

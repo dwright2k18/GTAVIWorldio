@@ -188,7 +188,7 @@ BEGIN
     OR settings.daily_cost_limit_micros < daily_cost_micros + p_reserved_cost_micros
     OR settings.per_candidate_call_limit <= candidate_calls
     OR settings.per_candidate_cost_limit_micros < candidate_cost_micros + p_reserved_cost_micros
-    OR settings.max_regenerations < candidate_regenerations + CASE WHEN same_kind_exists THEN 1 ELSE 0 END
+    OR settings.max_regenerations < candidate_regenerations + (CASE WHEN same_kind_exists THEN 1 ELSE 0 END)
   THEN
     RAISE EXCEPTION 'AI generation budget is exhausted' USING ERRCODE = '42501';
   END IF;
